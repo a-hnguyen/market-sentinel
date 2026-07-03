@@ -1,0 +1,26 @@
+[project]
+name = "trading-alert-engine"
+version = "0.1.0"
+description = "Async alert engine that watches human-approved symbols on 2-min bars and fires console alerts on a Bollinger Band + RSI setup."
+# README targets 3.12; relaxed to 3.10 to match the local interpreter. Bump back if standardizing on 3.12.
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "numpy",
+    "yfinance",      # screening only (never the trade/data path)
+    "alpaca-py",     # real-time 1-min bar feed
+    "python-dotenv", # load ALPACA_* from .env
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["alertengine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
