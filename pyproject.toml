@@ -10,10 +10,11 @@ dependencies = [
     "yfinance",      # screening only (never the trade/data path)
     "alpaca-py",     # real-time 1-min bar feed
     "python-dotenv", # load ALPACA_* from .env
+    "tzdata",        # zoneinfo tz database (needed on Windows; no-op elsewhere)
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "black"]
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -21,6 +22,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["alertengine*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,21 +2,24 @@
 background task while the user types commands.
 
 Commands:
-  screen              run the screener, print numbered candidates
-  approve <syms...>   add symbols to the approved watchlist
-  watchlist           show approved symbols
-  watch               start the 2-min watch loop (background)
-  stop                stop the watch loop
-  status              connection/bars/armed state
-  help                show commands
-  quit                stop and exit
+  screen                 run the screener, print numbered candidates
+  approve <syms...>      add symbols to the approved watchlist
+  watchlist              show approved symbols
+  watch                  start the 2-min watch loop (background)
+  stop                   stop the watch loop
+  status                 connection/bars/armed state
+  help                   show commands
+  quit                   stop and exit
 """
 
 import asyncio
+import json
 
 from .engine import AlertEngine
 
 HELP = __doc__.split("Commands:", 1)[1]
+
+MOST_ACTIVE_URL = "https://finance.yahoo.com/markets/stocks/most-active/"
 
 
 async def _ainput(prompt: str) -> str:
@@ -42,17 +45,28 @@ async def run(engine: AlertEngine) -> None:
         cmd = cmd.lower()
 
         if cmd == "help":
-            print(HELP)
+            print(HELP.strip("\n"))
 
         elif cmd == "screen":
             last_candidates = await engine.screen()
+            # In replay mode, note the historical date range the bars come from.
+            window = getattr(engine.feed, "describe_window", None)
+            if window:
+                print(window())
             if not last_candidates:
                 print("no candidates")
+            else:
+                # Bare URLs are ⌘-clickable in every Mac terminal (unlike OSC 8
+                # hyperlinks, which Terminal.app ignores). Quote page per row.
+                print(f"Yahoo most active: {MOST_ACTIVE_URL}\n")
             for i, c in enumerate(last_candidates, 1):
+                url = f"https://finance.yahoo.com/quote/{c.symbol}"
+                # Right-align the numeric fields to fixed widths so every column
+                # (and the trailing URL) lines up regardless of value magnitude.
                 print(
-                    f"{i:>2}. {c.symbol:<6} ${c.price:<7.2f} "
-                    f"{c.pct_change:+.1f}%  volx{c.volume_ratio:.1f}  "
-                    f"cap {c.market_cap/1e9:.1f}B  [{c.source}]"
+                    f"{i:>2}.   {c.symbol:<6}   ${c.price:>8.2f}   "
+                    f"{c.pct_change:>+6.1f}%   volx{c.volume_ratio:>4.1f}   "
+                    f"cap {c.market_cap/1e9:>6.1f}B   [{c.source:<12}]   {url}"
                 )
 
         elif cmd == "approve":
@@ -88,7 +102,7 @@ async def run(engine: AlertEngine) -> None:
                 print("not watching")
 
         elif cmd == "status":
-            print(engine.status())
+            print(json.dumps(engine.status(), indent=4))
 
         elif cmd == "quit":
             if watch_task and not watch_task.done():
@@ -102,3 +116,8 @@ async def run(engine: AlertEngine) -> None:
 
         else:
             print(f"unknown command: {cmd} (try 'help')")
+
+        # One blank line after each command's output block, so successive
+        # commands don't run together. Centralized here instead of appending
+        # "\n" to every print above. (quit returns early; empty input continues.)
+        print()

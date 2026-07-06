@@ -1,11 +1,15 @@
 """Entry point.
 
   python -m alertengine           # mock mode (no API keys, synthetic bars)
-  python -m alertengine --live    # real mode (yfinance screen + Alpaca 1-min feed)
+  python -m alertengine --replay  # real historical 1-min bars (works any time)
+  python -m alertengine --live    # real-time mode (yfinance screen + Alpaca stream)
 
-Live mode reads ALPACA_API_KEY / ALPACA_SECRET_KEY (from a .env file). Because
-everything sits behind the four interfaces, switching mock<->live only changes
-which Screener/DataFeed get constructed here — the engine is untouched.
+Live/replay mode reads ALPACA_API_KEY / ALPACA_SECRET_KEY (from a .env file).
+`--replay` pulls a recent trading day's real bars over REST and replays them, so
+you can exercise the full pipeline on real data when the market is closed;
+`--live` streams real-time bars (only emits during market hours). Because
+everything sits behind the four interfaces, switching modes only changes which
+Screener/DataFeed get constructed here — the engine is untouched.
 """
 
 import asyncio
@@ -18,16 +22,23 @@ from .repl import run
 from .rules.bb_rsi_rule import BBRSIRule
 
 
-def build_engine(live: bool = False) -> AlertEngine:
-    if live:
+def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
+    if live or replay:
         from dotenv import load_dotenv
 
-        from .feeds.alpaca_feed import AlpacaFeed
         from .screeners.yfinance_screener import YFinanceScreener
 
         load_dotenv()  # pull ALPACA_* from .env if present
         screener = YFinanceScreener()
-        feed = AlpacaFeed()  # raises if credentials are missing
+        if replay:
+            from .feeds.alpaca_replay_feed import AlpacaReplayFeed
+
+            # Small interval so replayed bars stream visibly in the REPL.
+            feed = AlpacaReplayFeed(interval=0.02)  # raises if creds missing
+        else:
+            from .feeds.alpaca_feed import AlpacaFeed
+
+            feed = AlpacaFeed()  # raises if credentials are missing
     else:
         from .feeds.mock_feed import MockFeed
         from .screeners.mock_screener import MockScreener
@@ -46,9 +57,11 @@ def build_engine(live: bool = False) -> AlertEngine:
 
 
 if __name__ == "__main__":
-    live = "--live" in sys.argv[1:]
+    args = sys.argv[1:]
+    live = "--live" in args
+    replay = "--replay" in args
     try:
-        engine = build_engine(live=live)
+        engine = build_engine(live=live, replay=replay)
     except RuntimeError as e:
         # e.g. missing Alpaca credentials in --live mode.
         print(f"error: {e}")

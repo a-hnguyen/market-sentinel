@@ -70,7 +70,9 @@ def test_loser_rejected_when_drop_too_small():
 
 def test_loser_rejected_when_volume_ratio_too_low():
     s = make()
-    assert s._passes(s._to_candidate(quote(regularMarketVolume=1_000_000))) is False  # ratio 1.0
+    assert (
+        s._passes(s._to_candidate(quote(regularMarketVolume=1_000_000))) is False
+    )  # ratio 1.0
 
 
 def test_price_band_enforced():
@@ -89,7 +91,10 @@ def test_most_actives_skips_loser_only_gates():
     s = make()
     # Small drop + low volume, but source is most_actives -> only price/cap apply.
     c = s._to_candidate(
-        quote(_source="most_actives", regularMarketChangePercent=-1.0,
-              regularMarketVolume=100_000)
+        quote(
+            _source="most_actives",
+            regularMarketChangePercent=-1.0,
+            regularMarketVolume=100_000,
+        )
     )
     assert s._passes(c) is True

@@ -27,8 +27,22 @@ def test_to_bar_maps_alpaca_bar():
     )
     bar = AlpacaFeed._to_bar(abar)
     assert isinstance(bar, Bar)
-    assert (bar.symbol, bar.timestamp, bar.open, bar.high, bar.low, bar.close, bar.volume) == (
-        "AAPL", ts, 1.0, 2.0, 0.5, 1.5, 1000,
+    assert (
+        bar.symbol,
+        bar.timestamp,
+        bar.open,
+        bar.high,
+        bar.low,
+        bar.close,
+        bar.volume,
+    ) == (
+        "AAPL",
+        ts,
+        1.0,
+        2.0,
+        0.5,
+        1.5,
+        1000,
     )
 
 
