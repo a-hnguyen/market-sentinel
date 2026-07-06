@@ -47,6 +47,11 @@ class ConsoleNotifier(Notifier):
                 f"close {c['close']:>9.2f}   lower BB {c['bb_lower']:>9.2f}   "
                 f"RSI {c['rsi']:>5.1f}"
             )
+            # Day % change / relative volume come from screening; show when known.
+            if "pct_change" in c:
+                body += f"   chg {c['pct_change']:>+6.1f}%"
+            if "volume_ratio" in c:
+                body += f"   volx {c['volume_ratio']:>4.1f}"
         else:
             body = alert.message
         # Date included because replay bars span multiple days; %Z -> PST/PDT.

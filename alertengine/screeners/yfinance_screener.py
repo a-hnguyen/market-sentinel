@@ -27,6 +27,7 @@ class YFinanceScreener(Screener):
         min_market_cap: float = settings.MIN_MARKET_CAP,
         loser_min_volume_ratio: float = settings.LOSER_MIN_VOLUME_RATIO,
         loser_min_pct_loss: float = settings.LOSER_MIN_PCT_LOSS,
+        min_abs_pct_change: float = settings.SCREEN_MIN_ABS_PCT_CHANGE,
         near_low_pct: float = 0.10,  # within 10% of the 52-week low
     ) -> None:
         self.sources = sources
@@ -35,6 +36,7 @@ class YFinanceScreener(Screener):
         self.min_market_cap = min_market_cap
         self.loser_min_volume_ratio = loser_min_volume_ratio
         self.loser_min_pct_loss = loser_min_pct_loss
+        self.min_abs_pct_change = min_abs_pct_change
         self.near_low_pct = near_low_pct
         self._last_good: list[Candidate] = []
 
@@ -48,6 +50,8 @@ class YFinanceScreener(Screener):
 
         candidates = [c for c in (self._to_candidate(q) for q in raw) if c]
         filtered = [c for c in candidates if self._passes(c)]
+        # Sort by day % change, highest to lowest.
+        filtered.sort(key=lambda c: c.pct_change, reverse=True)
         if filtered:
             self._last_good = filtered
         return filtered
@@ -88,6 +92,9 @@ class YFinanceScreener(Screener):
         if not (self.price_min <= c.price <= self.price_max):
             return False
         if c.market_cap < self.min_market_cap:
+            return False
+        # Only surface names moving meaningfully on the day (either direction).
+        if abs(c.pct_change) < self.min_abs_pct_change:
             return False
         # Losers get an extra volume + magnitude-of-drop gate.
         if c.source == "day_losers":

@@ -43,10 +43,15 @@ class AlertEngine:
 
         self._agg = BarAggregator()
         self._states: dict[str, _SymbolState] = {}
+        # Latest screened candidate per symbol, so alerts can carry the day's
+        # % change / relative volume (which live on the Candidate, not the bars).
+        self._candidates: dict[str, Candidate] = {}
         self.watching = False
 
     async def screen(self) -> list[Candidate]:
-        return await self.screener.get_candidates()
+        candidates = await self.screener.get_candidates()
+        self._candidates = {c.symbol: c for c in candidates}
+        return candidates
 
     async def watch(self, symbols: list[str]) -> None:
         """Consume 1-min bars for `symbols`, aggregate to 2-min, evaluate the
@@ -74,6 +79,12 @@ class AlertEngine:
         alert = self.rule.evaluate(bar.symbol, state.history)
 
         if alert is not None:
+            # Enrich with screening context (day % change, relative volume) so
+            # the notifier can show it. Keeps the rule stateless/bar-only.
+            cand = self._candidates.get(bar.symbol)
+            if cand is not None:
+                alert.context.setdefault("pct_change", cand.pct_change)
+                alert.context.setdefault("volume_ratio", cand.volume_ratio)
             if state.armed:
                 await self.notifier.send(alert)
                 state.armed = False

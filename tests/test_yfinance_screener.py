@@ -31,6 +31,7 @@ def make(**thresholds) -> YFinanceScreener:
         min_market_cap=1_000_000_000,
         loser_min_volume_ratio=1.5,
         loser_min_pct_loss=10.0,
+        min_abs_pct_change=0.0,  # explicit so tests don't depend on settings_local
     )
     defaults.update(thresholds)
     return YFinanceScreener(**defaults)
@@ -79,6 +80,19 @@ def test_price_band_enforced():
     s = make()
     assert s._passes(s._to_candidate(quote(regularMarketPrice=150.0))) is False
     assert s._passes(s._to_candidate(quote(regularMarketPrice=5.0))) is False
+
+
+def test_min_abs_pct_change_filters_small_movers():
+    s = make(min_abs_pct_change=10.0)
+    # A most-active up only +3% is filtered out; a -12% mover passes.
+    small = s._to_candidate(
+        quote(_source="most_actives", regularMarketChangePercent=3.0)
+    )
+    big = s._to_candidate(
+        quote(_source="most_actives", regularMarketChangePercent=-12.0)
+    )
+    assert s._passes(small) is False
+    assert s._passes(big) is True
 
 
 def test_market_cap_floor_enforced():

@@ -23,6 +23,7 @@ PRICE_MAX = 100_000
 MIN_MARKET_CAP = 0
 LOSER_MIN_VOLUME_RATIO = 1.0
 LOSER_MIN_PCT_LOSS = 0.0
+SCREEN_MIN_ABS_PCT_CHANGE = 0.0  # min |day % change| to list (0 = no filter)
 
 # De-dup
 COOLDOWN_BARS = 5

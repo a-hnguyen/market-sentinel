@@ -13,22 +13,37 @@ Screener/DataFeed get constructed here — the engine is untouched.
 """
 
 import asyncio
+import os
 import sys
+
+from dotenv import load_dotenv
 
 from .engine import AlertEngine
 from .gate import ApprovalGate
+from .interfaces import Notifier
 from .notifiers.console_notifier import ConsoleNotifier
 from .repl import run
 from .rules.bb_rsi_rule import BBRSIRule
 
 
-def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
-    if live or replay:
-        from dotenv import load_dotenv
+def _build_notifier() -> Notifier:
+    """Console always; add ntfy phone/desktop push when NTFY_TOPIC is set."""
+    notifiers: list[Notifier] = [ConsoleNotifier()]
+    if os.environ.get("NTFY_TOPIC"):
+        from .notifiers.ntfy_notifier import NtfyNotifier
+        from .notifiers.multi_notifier import MultiNotifier
 
+        notifiers.append(NtfyNotifier())
+        print(f"ntfy push enabled → topic '{os.environ['NTFY_TOPIC']}'")
+        return MultiNotifier(notifiers)
+    return notifiers[0]
+
+
+def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
+    load_dotenv()  # pull ALPACA_* / NTFY_* from .env if present
+    if live or replay:
         from .screeners.yfinance_screener import YFinanceScreener
 
-        load_dotenv()  # pull ALPACA_* from .env if present
         screener = YFinanceScreener()
         if replay:
             from .feeds.alpaca_replay_feed import AlpacaReplayFeed
@@ -51,7 +66,7 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         screener=screener,
         feed=feed,
         rule=BBRSIRule(),
-        notifier=ConsoleNotifier(),
+        notifier=_build_notifier(),
         gate=ApprovalGate(),
     )
 
