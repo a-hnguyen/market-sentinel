@@ -36,9 +36,12 @@ def test_missing_topic_raises(monkeypatch):
 def test_body_includes_change_and_volume():
     n = NtfyNotifier(topic="t")
     body = n._body(_alert())
-    assert "close 41.15" in body
-    assert "day -17.0%" in body
-    assert "vol x2.0" in body
+    # One field per line, colon-delimited.
+    assert "close:   41.15" in body
+    assert "RSI:     11.1" in body
+    assert "day:     -17.0%" in body
+    assert "rel vol: x2.0" in body
+    assert "\n" in body
 
 
 def test_send_posts_to_topic_url_with_headers(monkeypatch):
@@ -61,7 +64,7 @@ def test_send_posts_to_topic_url_with_headers(monkeypatch):
     asyncio.run(n.send(_alert()))
 
     assert captured["url"] == "https://ntfy.sh/my-topic"
-    assert b"close 41.15" in captured["data"]
+    assert b"close:   41.15" in captured["data"]
     # urllib capitalizes header keys.
     assert captured["headers"]["Title"] == "OUST - layer-1 alert"
     # Title must be latin-1 encodable (HTTP header constraint).

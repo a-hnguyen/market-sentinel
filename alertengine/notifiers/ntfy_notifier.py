@@ -41,14 +41,27 @@ class NtfyNotifier(Notifier):
         self._token = token or os.environ.get("NTFY_TOKEN")
         self._log = logging.getLogger("alertengine.ntfy")
 
+    @staticmethod
+    def _row(label: str, value: str) -> str:
+        # "label:" left-padded so the colons line up in a monospace client.
+        return f"{label + ':':<9}{value}"
+
     def _body(self, alert: Alert) -> str:
-        parts = [alert.message]
+        # Phone push fonts are proportional, so one field per line (with a colon
+        # delimiter) reads far better than space-aligned columns on one line.
         c = alert.context or {}
-        if "pct_change" in c:
-            parts.append(f"day {c['pct_change']:+.1f}%")
-        if "volume_ratio" in c:
-            parts.append(f"vol x{c['volume_ratio']:.1f}")
-        return " | ".join(parts)
+        if {"close", "bb_lower", "rsi"} <= c.keys():
+            lines = [
+                self._row("close", f"{c['close']:.2f}"),
+                self._row("BB low", f"{c['bb_lower']:.2f}"),
+                self._row("RSI", f"{c['rsi']:.1f}"),
+            ]
+            if "pct_change" in c:
+                lines.append(self._row("day", f"{c['pct_change']:+.1f}%"))
+            if "volume_ratio" in c:
+                lines.append(self._row("rel vol", f"x{c['volume_ratio']:.1f}"))
+            return "\n".join(lines)
+        return alert.message
 
     def _post(self, alert: Alert) -> None:
         req = urllib.request.Request(
