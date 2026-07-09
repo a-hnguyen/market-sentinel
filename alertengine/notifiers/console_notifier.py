@@ -54,7 +54,10 @@ class ConsoleNotifier(Notifier):
                 body += f"   volx {c['volume_ratio']:>4.1f}"
         else:
             body = alert.message
+        # Label the two stages distinctly so the console reads clearly:
+        # WATCH = armed setup, BUY = two-green confirmation.
+        tag = {"watch": "WATCH", "buy": "BUY  "}.get(alert.kind, "ALERT")
         # Date included because replay bars span multiple days; %Z -> PST/PDT.
-        line = f"[ALERT {local:%Y-%m-%d %H:%M %Z}]  {alert.symbol:<6}  {body}"
+        line = f"[{tag} {local:%Y-%m-%d %H:%M %Z}]  {alert.symbol:<6}  {body}"
         print(line)
         self._log.info("%s %s %s", alert.symbol, alert.rule, alert.context)

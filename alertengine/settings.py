@@ -25,8 +25,16 @@ LOSER_MIN_VOLUME_RATIO = 1.0
 LOSER_MIN_PCT_LOSS = 0.0
 SCREEN_MIN_ABS_PCT_CHANGE = 0.0  # min |day % change| to list (0 = no filter)
 
-# De-dup
+# De-dup / cooldown: min 2-min bars after a buy alert (and setup must clear)
+# before a symbol can re-arm. Prevents re-firing on the same oversold episode.
 COOLDOWN_BARS = 5
+
+# Stage-2 confirmation (two-stage state machine):
+#   layer-1 setup only *arms* a symbol; a BUY fires on CONFIRM_GREEN_BARS
+#   consecutive green 2-min closes. If it doesn't confirm within
+#   ARM_TIMEOUT_BARS 2-min bars (10 = 20 min), the symbol resets to scratch.
+CONFIRM_GREEN_BARS = 2
+ARM_TIMEOUT_BARS = 10
 
 # Local overrides (git-ignored): real confirmed params, applied last so they win.
 try:

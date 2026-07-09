@@ -82,5 +82,9 @@ class NtfyNotifier(Notifier):
             print(f"[ntfy] push failed: {e}")
 
     async def send(self, alert: Alert) -> None:
+        # Phone buzzes only on the actionable BUY confirmation. "watch" alerts
+        # (a setup merely arming) stay console-only to avoid AFK noise.
+        if getattr(alert, "kind", "alert") == "watch":
+            return
         # urllib is blocking; keep it off the event loop.
         await asyncio.to_thread(self._post, alert)

@@ -73,6 +73,27 @@ def test_send_posts_to_topic_url_with_headers(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer secret"
 
 
+def test_watch_alerts_are_not_pushed(monkeypatch):
+    posts = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        posts["n"] += 1
+
+        class _Resp:
+            pass
+
+        return _Resp()
+
+    monkeypatch.setattr(
+        "alertengine.notifiers.ntfy_notifier.urllib.request.urlopen", fake_urlopen
+    )
+    n = NtfyNotifier(topic="t")
+    watch = _alert()
+    watch.kind = "watch"  # console-only stage
+    asyncio.run(n.send(watch))
+    assert posts["n"] == 0  # phone is never hit for a watch
+
+
 def test_send_swallows_network_errors(monkeypatch, capsys):
     def boom(req, timeout=None):
         raise OSError("network down")

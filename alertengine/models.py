@@ -36,3 +36,6 @@ class Alert:
     rule: str  # e.g. "bb_rsi_layer1"
     message: str
     context: dict = field(default_factory=dict)  # close, bb_lower, rsi, etc.
+    # "watch" = layer-1 setup armed (console-only); "buy" = two-green confirm
+    # (pushed to phone). Notifiers filter on this. Default keeps prior behavior.
+    kind: str = "alert"
