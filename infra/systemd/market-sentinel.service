@@ -1,0 +1,21 @@
+# The always-on alert engine: holds the Alpaca websocket, evaluates rules, pushes
+# alerts. Depends on the config unit having populated the EnvironmentFile. On
+# startup it auto-approves the latest candidates.csv the pre-screen wrote.
+[Unit]
+Description=market-sentinel alert engine (live)
+After=network-online.target market-sentinel-config.service
+Wants=network-online.target
+Requires=market-sentinel-config.service
+
+[Service]
+Type=simple
+User=msuser
+WorkingDirectory=/opt/market-sentinel/app
+EnvironmentFile=/etc/market-sentinel/engine.env
+ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine --live
+Restart=always
+RestartSec=10
+# Ops alerting on repeated failure is wired in Phase 3 via OnFailure=.
+
+[Install]
+WantedBy=multi-user.target

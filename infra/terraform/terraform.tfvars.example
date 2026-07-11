@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (git-ignored) and adjust. Defaults in variables.tf are
+# sensible for a free-tier single-box deploy, so this can stay nearly empty.
+
+# region        = "us-east-1"
+# instance_type = "t3.micro"          # free-tier eligible for 12 months
+
+# Get infra-health emails (engine down / alarm). Not the trading alert channel.
+# ops_email = "you@example.com"
+
+# Pin the AMI instead of auto-resolving latest Amazon Linux 2023:
+# ami_id = "ami-0abcdef1234567890"
+
+# tags = { Owner = "anna", Env = "prod" }

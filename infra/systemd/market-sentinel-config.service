@@ -1,0 +1,16 @@
+# Runs once at boot before the engine: pulls secrets from SSM into the engine
+# EnvironmentFile and syncs the private strategy overlay from S3. RemainAfterExit
+# keeps it "active" so dependent units treat it as a satisfied prerequisite.
+[Unit]
+Description=market-sentinel: fetch secrets (SSM) + sync private overlay (S3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/market-sentinel/app/infra/scripts/fetch-config.sh
+ExecStart=/opt/market-sentinel/app/infra/scripts/sync-overlay.sh
+
+[Install]
+WantedBy=multi-user.target

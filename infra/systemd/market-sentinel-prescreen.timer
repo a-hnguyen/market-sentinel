@@ -1,0 +1,12 @@
+# Fires the pre-screen pre-market. The box clock is UTC; 10:00 UTC is ~5-6am ET,
+# safely before the 9:30 ET open. The pre-screen self-skips market holidays, so a
+# weekday schedule is enough. Persistent=true reruns a missed fire (box was off).
+[Unit]
+Description=run market-sentinel pre-screen every weekday pre-market
+
+[Timer]
+OnCalendar=Mon-Fri *-*-* 10:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

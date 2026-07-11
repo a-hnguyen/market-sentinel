@@ -22,7 +22,7 @@ from alpaca.data.enums import DataFeed as AlpacaDataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.live import StockDataStream
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from ..interfaces import DataFeed
 from ..models import Bar
@@ -91,6 +91,31 @@ class AlpacaFeed(DataFeed):
                 bars.append(self._to_bar(abar))
         bars.sort(key=lambda b: b.timestamp)
         return bars
+
+    def fetch_closes(
+        self, symbols: list[str], hours: int, lookback_days: int
+    ) -> dict[str, list[float]]:
+        """Historical closes per symbol at an arbitrary hourly timeframe, oldest
+        to newest. For the off-hours multi-timeframe pre-screen (RSI on 4h/1h
+        bars). One batched REST request covers all symbols; Alpaca returns bars
+        already in chronological order. Missing symbols map to an empty list.
+        """
+        if self._hist is None:
+            self._hist = StockHistoricalDataClient(self._key, self._secret)
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=lookback_days)
+        req = StockBarsRequest(
+            symbol_or_symbols=[s.upper() for s in symbols],
+            timeframe=TimeFrame(hours, TimeFrameUnit.Hour),
+            start=start,
+            end=end,
+            feed=self._feed,
+        )
+        barset = self._hist.get_stock_bars(req)
+        return {
+            s.upper(): [b.close for b in barset.data.get(s.upper(), [])]
+            for s in symbols
+        }
 
     async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]:
         queue: asyncio.Queue = asyncio.Queue()

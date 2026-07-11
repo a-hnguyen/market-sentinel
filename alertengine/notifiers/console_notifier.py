@@ -42,11 +42,13 @@ class ConsoleNotifier(Notifier):
         # so alerts line up regardless of price magnitude; fall back to the
         # rule's free-form message for rules that don't populate these keys.
         c = alert.context or {}
-        if {"close", "bb_lower", "rsi"} <= c.keys():
-            body = (
-                f"close {c['close']:>9.2f}   lower BB {c['bb_lower']:>9.2f}   "
-                f"RSI {c['rsi']:>5.1f}"
-            )
+        if {"close", "rsi"} <= c.keys() and ("bb_lower" in c or "bb_upper" in c):
+            # Buy alerts carry the lower band, sell alerts the upper — show whichever.
+            if "bb_lower" in c:
+                band = f"lower BB {c['bb_lower']:>9.2f}"
+            else:
+                band = f"upper BB {c['bb_upper']:>9.2f}"
+            body = f"close {c['close']:>9.2f}   {band}   RSI {c['rsi']:>5.1f}"
             # Day % change / relative volume come from screening; show when known.
             if "pct_change" in c:
                 body += f"   chg {c['pct_change']:>+6.1f}%"
@@ -54,9 +56,14 @@ class ConsoleNotifier(Notifier):
                 body += f"   volx {c['volume_ratio']:>4.1f}"
         else:
             body = alert.message
-        # Label the two stages distinctly so the console reads clearly:
-        # WATCH = armed setup, BUY = two-green confirmation.
-        tag = {"watch": "WATCH", "buy": "BUY  "}.get(alert.kind, "ALERT")
+        # Label the stages distinctly so the console reads clearly: WATCH/S-WCH =
+        # armed setup (buy/sell side), BUY/SELL = two-close confirmation.
+        tag = {
+            "watch": "WATCH",
+            "buy": "BUY  ",
+            "sell_watch": "S-WCH",
+            "sell": "SELL ",
+        }.get(alert.kind, "ALERT")
         # Date included because replay bars span multiple days; %Z -> PST/PDT.
         line = f"[{tag} {local:%Y-%m-%d %H:%M %Z}]  {alert.symbol:<6}  {body}"
         print(line)

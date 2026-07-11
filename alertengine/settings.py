@@ -25,6 +25,19 @@ LOSER_MIN_VOLUME_RATIO = 1.0
 LOSER_MIN_PCT_LOSS = 0.0
 SCREEN_MIN_ABS_PCT_CHANGE = 0.0  # min |day % change| to list (0 = no filter)
 
+# Overnight (swing) pre-screen: RSI-only oversold confluence across two
+# timeframes, run off-hours over a curated watchlist. A name survives only
+# if RSI is oversold on BOTH a slow and a fast timeframe. Generic defaults here;
+# real values may override in settings_local. (No Bollinger on this path — the
+# swing screen is RSI-only by design.)
+PRESCREEN_SLOW_HOURS = 4  # slow timeframe (hours per bar)
+PRESCREEN_SLOW_LOOKBACK_DAYS = 90  # ~3 months of slow bars
+PRESCREEN_FAST_HOURS = 1  # fast timeframe (hours per bar)
+PRESCREEN_FAST_LOOKBACK_DAYS = 30  # ~1 month of fast bars
+PRESCREEN_RSI_THRESHOLD = RSI_OVERSOLD  # reuse the standard oversold line
+PRESCREEN_WATCHLIST_PATH = "alertengine/data/watchlist.xls"  # git-ignored input
+PRESCREEN_OUTPUT_PATH = "candidates.csv"  # nightly survivors (git-ignored *.csv)
+
 # De-dup / cooldown: min 2-min bars after a buy alert (and setup must clear)
 # before a symbol can re-arm. Prevents re-firing on the same oversold episode.
 COOLDOWN_BARS = 5
@@ -34,6 +47,9 @@ COOLDOWN_BARS = 5
 #   consecutive green 2-min closes. If it doesn't confirm within
 #   ARM_TIMEOUT_BARS 2-min bars (10 = 20 min), the symbol resets to scratch.
 CONFIRM_GREEN_BARS = 2
+# Exit mirror: an overbought setup arms the SELL side; a SELL fires on
+# CONFIRM_RED_BARS consecutive red 2-min closes (same arm-timeout/cooldown).
+CONFIRM_RED_BARS = 2
 ARM_TIMEOUT_BARS = 10
 
 # Local overrides (git-ignored): real confirmed params, applied last so they win.

@@ -8,6 +8,7 @@ dependencies = [
     "pandas",
     "numpy",
     "yfinance",      # screening only (never the trade/data path)
+    "xlrd",          # read the .xls watchlist for the overnight pre-screen
     "alpaca-py",     # real-time 1-min bar feed
     "python-dotenv", # load ALPACA_* from .env
     "tzdata",        # zoneinfo tz database (needed on Windows; no-op elsewhere)

@@ -4,6 +4,8 @@ background task while the user types commands.
 Commands:
   screen                 run the screener, print numbered candidates
   approve <syms...>      add symbols to the approved watchlist
+  prescreen              re-run the overnight pre-screen now, approve survivors
+  load [path]            approve tickers from the pre-screen's candidates CSV
   watchlist              show approved symbols
   watch                  start the 2-min watch loop (background)
   stop                   stop the watch loop
@@ -14,8 +16,11 @@ Commands:
 
 import asyncio
 import json
+import os
 
+from . import settings
 from .engine import AlertEngine
+from .prescreen.sinks import load_candidates
 
 HELP = __doc__.split("Commands:", 1)[1]
 
@@ -27,10 +32,32 @@ async def _ainput(prompt: str) -> str:
     return await loop.run_in_executor(None, input, prompt)
 
 
-async def run(engine: AlertEngine) -> None:
+def _approve_from_file(engine: AlertEngine, path: str) -> None:
+    """Approve the pre-screen's survivors from a candidates CSV into the gate."""
+    try:
+        symbols = load_candidates(path)
+    except FileNotFoundError:
+        print(f"no candidates file at {path!r}; run 'python -m alertengine.prescreen'")
+        return
+    if not symbols:
+        print(f"{path!r} has no tickers")
+        return
+    engine.gate.approve(*symbols)
+    print(f"approved {len(symbols)} from {path!r}: {', '.join(symbols)}")
+
+
+async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
     print("Trading alert engine. Type 'help' for commands.")
     watch_task: asyncio.Task | None = None
     last_candidates: list = []
+
+    # Auto-approve the overnight pre-screen's survivors on startup, if present,
+    # so the watchlist is pre-seeded without any manual 'approve' typing. Only in
+    # real-data modes (--live/--replay); mock mode stays a clean sandbox instead
+    # of silently seeding real tickers from a leftover candidates CSV.
+    if auto_approve and os.path.exists(settings.PRESCREEN_OUTPUT_PATH):
+        _approve_from_file(engine, settings.PRESCREEN_OUTPUT_PATH)
+        print()
 
     while True:
         try:
@@ -75,6 +102,29 @@ async def run(engine: AlertEngine) -> None:
             else:
                 engine.gate.approve(*args)
                 print("watchlist:", ", ".join(engine.gate.watchlist()) or "(empty)")
+
+        elif cmd == "prescreen":
+            from .prescreen.runner import run_prescreen
+
+            try:
+                results = run_prescreen()
+            except FileNotFoundError:
+                print(
+                    "watchlist not found; add the curated .xls/.csv "
+                    f"at {settings.PRESCREEN_WATCHLIST_PATH!r}"
+                )
+            except RuntimeError as e:  # needs Alpaca creds
+                print(f"pre-screen needs Alpaca credentials: {e}")
+            else:
+                syms = [r.symbol for r in results]
+                if syms:
+                    engine.gate.approve(*syms)
+                print(f"pre-screen approved {len(syms)}: {', '.join(syms) or '(none)'}")
+
+        elif cmd == "load":
+            _approve_from_file(
+                engine, args[0] if args else settings.PRESCREEN_OUTPUT_PATH
+            )
 
         elif cmd == "watchlist":
             print(", ".join(engine.gate.watchlist()) or "(empty)")

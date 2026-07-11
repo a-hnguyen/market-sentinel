@@ -1,0 +1,17 @@
+# Overnight pre-screen: RSI 4h/1h confluence over Alpaca history → candidates.csv
+# in the repo root (the engine's WorkingDirectory). Self-skips non-trading days.
+# After writing, it restarts the engine so startup auto-approves tonight's list.
+[Unit]
+Description=market-sentinel overnight pre-screen
+After=network-online.target market-sentinel-config.service
+Wants=network-online.target
+Requires=market-sentinel-config.service
+
+[Service]
+Type=oneshot
+User=msuser
+WorkingDirectory=/opt/market-sentinel/app
+EnvironmentFile=/etc/market-sentinel/engine.env
+ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine.prescreen
+# '+' runs as root: the service user can't restart a system unit on its own.
+ExecStartPost=+/usr/bin/systemctl restart market-sentinel.service

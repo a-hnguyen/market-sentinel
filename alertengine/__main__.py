@@ -4,6 +4,11 @@
   python -m alertengine --replay  # real historical 1-min bars (works any time)
   python -m alertengine --live    # real-time mode (yfinance screen + Alpaca stream)
 
+Add --prescreen (with --live/--replay) to refresh the overnight candidates by
+running the pre-screen at startup before the REPL; the survivors are then
+auto-approved into the watchlist. Without it, startup loads the last candidates
+CSV a prior run/cron wrote.
+
 Live/replay mode reads ALPACA_API_KEY / ALPACA_SECRET_KEY (from a .env file).
 `--replay` pulls a recent trading day's real bars over REST and replays them, so
 you can exercise the full pipeline on real data when the market is closed;
@@ -18,11 +23,13 @@ import sys
 
 from dotenv import load_dotenv
 
+from . import settings
 from .engine import AlertEngine
 from .gate import ApprovalGate
 from .interfaces import Notifier
 from .notifiers.console_notifier import ConsoleNotifier
 from .repl import run
+from .rules.bb_rsi_exit_rule import BBRSIExitRule
 from .rules.bb_rsi_rule import BBRSIRule
 
 
@@ -66,6 +73,7 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         screener=screener,
         feed=feed,
         rule=BBRSIRule(),
+        exit_rule=BBRSIExitRule(),  # SELL side: overbought -> two red closes
         notifier=_build_notifier(),
         gate=ApprovalGate(),
     )
@@ -82,7 +90,24 @@ if __name__ == "__main__":
         print(f"error: {e}")
         print("hint: copy .env.example to .env and add your keys, or omit --live.")
         sys.exit(1)
+
+    if "--prescreen" in args:
+        # Refresh candidates before the REPL starts; run()'s auto-approve then
+        # picks up the freshly-written CSV. Non-fatal if it can't run.
+        from .prescreen.runner import run_prescreen
+
+        try:
+            results = run_prescreen()
+            print(
+                f"pre-screen: {len(results)} survivor(s) -> "
+                f"{settings.PRESCREEN_OUTPUT_PATH!r}"
+            )
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"pre-screen skipped: {e}")
+
     try:
-        asyncio.run(run(engine))
+        # Auto-approve the pre-screen's survivors on startup only in real-data
+        # modes; mock mode stays a clean sandbox.
+        asyncio.run(run(engine, auto_approve=live or replay))
     except KeyboardInterrupt:
         pass

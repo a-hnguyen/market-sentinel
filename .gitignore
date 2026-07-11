@@ -1,6 +1,7 @@
 # Private / personal notes (never commit)
 JS_Context.md
 Trading_Bot_Context.md
+ARCHITECTURE.md
 # BUILD_SPEC.md contains Dad's strategy IP — keep private for now
 BUILD_SPEC.md
 
@@ -11,6 +12,10 @@ BUILD_SPEC.md
 alertengine/rules/_private/
 alertengine/settings_local.py
 *.log
+
+# Pre-screen input (Dad's curated watchlist) and nightly output
+alertengine/data/
+*.csv
 __pycache__/
 .venv/
 
@@ -18,3 +23,15 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Terraform — never commit state (may contain secrets) or real var values
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+# Lambda build artifacts
+infra/lambda/**/*.zip

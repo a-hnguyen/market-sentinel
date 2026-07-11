@@ -70,9 +70,12 @@ class NtfyNotifier(Notifier):
             method="POST",
         )
         # HTTP headers are latin-1 only, so keep the Title ASCII (no em-dash).
-        req.add_header("Title", f"{alert.symbol} - layer-1 alert")
+        is_sell = getattr(alert, "kind", "alert") == "sell"
+        title = "exit alert" if is_sell else "layer-1 alert"
+        tag = "chart_with_upwards_trend" if is_sell else "chart_with_downwards_trend"
+        req.add_header("Title", f"{alert.symbol} - {title}")
         req.add_header("Priority", "high")  # break through even when AFK
-        req.add_header("Tags", "chart_with_downwards_trend")
+        req.add_header("Tags", tag)
         if self._token:
             req.add_header("Authorization", f"Bearer {self._token}")
         try:
@@ -82,9 +85,10 @@ class NtfyNotifier(Notifier):
             print(f"[ntfy] push failed: {e}")
 
     async def send(self, alert: Alert) -> None:
-        # Phone buzzes only on the actionable BUY confirmation. "watch" alerts
-        # (a setup merely arming) stay console-only to avoid AFK noise.
-        if getattr(alert, "kind", "alert") == "watch":
+        # Phone buzzes only on the actionable BUY/SELL confirmations. The "watch"
+        # and "sell_watch" arm alerts (a setup merely arming) stay console-only to
+        # avoid AFK noise.
+        if getattr(alert, "kind", "alert") in ("watch", "sell_watch"):
             return
         # urllib is blocking; keep it off the event loop.
         await asyncio.to_thread(self._post, alert)
