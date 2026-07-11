@@ -13,6 +13,10 @@ locals {
     alpaca_api_key    = "SET_ME"
     alpaca_secret_key = "SET_ME"
     ntfy_topic        = "SET_ME"
+    # Read-only GitHub token so the box can clone the PRIVATE repo. Set to a
+    # fine-grained PAT with Contents:read on this repo only. Leave as SET_ME and
+    # make the repo public instead if you'd rather not manage a token.
+    github_token = "SET_ME"
   }
 }
 

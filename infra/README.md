@@ -63,20 +63,33 @@ cd infra/scripts && ./bootstrap-state.sh      # prints the init command
 cd ../terraform
 terraform init -backend-config="bucket=..." -backend-config="region=us-east-1"
 
-# 3. Review + apply.
-terraform plan
-terraform apply
+# 3. Create the secret slots + overlay bucket FIRST (not the box yet). The box
+#    reads these at boot, so they must exist before it launches, or its clone
+#    fails against SET_ME placeholders.
+terraform apply -target=aws_ssm_parameter.config -target=aws_s3_bucket.overlay
 
-# 4. Set the real secrets into the SSM slots Terraform created.
+# 4. Set the real secrets into the SSM slots.
 aws ssm put-parameter --name /market-sentinel/alpaca_api_key    --type SecureString --value 'PK...' --overwrite
 aws ssm put-parameter --name /market-sentinel/alpaca_secret_key --type SecureString --value '...'   --overwrite
 aws ssm put-parameter --name /market-sentinel/ntfy_topic        --type SecureString --value '...'   --overwrite
+# Private repo only: a fine-grained GitHub PAT (Contents:read on THIS repo) so the
+# box can clone. Skip this and make the repo public to clone without a token.
+aws ssm put-parameter --name /market-sentinel/github_token      --type SecureString --value 'github_pat_...' --overwrite
 
 # 5. Upload the private overlay (never in git) to the overlay bucket.
 BUCKET=$(terraform output -raw overlay_bucket)
-aws s3 cp ../../alertengine/settings_local.py       "s3://$BUCKET/private/settings_local.py"
-aws s3 cp ../../alertengine/data/watchlist.xls       "s3://$BUCKET/private/watchlist.xls"
+aws s3 cp ../../alertengine/settings_local.py        "s3://$BUCKET/private/settings_local.py"
+aws s3 cp ../../alertengine/data/watchlist.xls        "s3://$BUCKET/private/watchlist.xls"
 aws s3 cp --recursive ../../alertengine/rules/_private "s3://$BUCKET/private/rules/_private"
+
+# 6. Now apply the rest — this launches the box, which boots with real secrets,
+#    clones, installs the systemd units, and starts the engine.
+terraform plan
+terraform apply
+
+# 7. Confirm it came up (no SSH — SSM Session Manager). Needs the session plugin.
+eval "$(terraform output -raw ssm_session_command)"
+#   on the box:  systemctl status market-sentinel   journalctl -u market-sentinel -f
 ```
 
 ## Cost

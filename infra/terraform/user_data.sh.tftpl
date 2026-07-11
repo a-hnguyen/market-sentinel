@@ -13,19 +13,29 @@ APP_USER=msuser
 
 dnf update -y
 dnf install -y git python3.11 python3.11-pip
-# SSM agent is preinstalled on Amazon Linux 2023 (no inbound SSH needed).
+# SSM agent + AWS CLI v2 are preinstalled on Amazon Linux 2023 (no inbound SSH).
 
 id -u "$APP_USER" &>/dev/null || useradd -r -m -d "$APP_ROOT" "$APP_USER"
 
-# Clone (or update) the public repo. The private strategy overlay is NOT here —
-# it's pulled from S3 by the config service, so a public clone is incomplete.
+# Clone (or update) the repo. The repo is private, so authenticate the clone with
+# a read-only GitHub token pulled from SSM (the box's instance role grants read).
+# The token is passed per-command via http.extraHeader — never written into the
+# cloned repo's git config. The private strategy overlay is still NOT in the repo;
+# it's pulled from S3 by the config service, so this clone is deliberately partial.
+GH_TOKEN=$(aws ssm get-parameter --name "${ssm_prefix}/github_token" \
+  --with-decryption --query Parameter.Value --output text --region "${region}")
+# git-over-HTTPS wants Basic auth (Bearer is REST-API only). Username is ignored
+# by GitHub for token auth; x-access-token is the conventional placeholder.
+AUTH_HDR="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+
 if [ -d "$APP_DIR/.git" ]; then
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch --depth 1 origin "${repo_branch}"
+  sudo -u "$APP_USER" git -c "http.extraHeader=$AUTH_HDR" -C "$APP_DIR" fetch --depth 1 origin "${repo_branch}"
   sudo -u "$APP_USER" git -C "$APP_DIR" checkout -f "${repo_branch}"
   sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/${repo_branch}"
 else
-  sudo -u "$APP_USER" git clone --depth 1 --branch "${repo_branch}" "${repo_url}" "$APP_DIR"
+  sudo -u "$APP_USER" git -c "http.extraHeader=$AUTH_HDR" clone --depth 1 --branch "${repo_branch}" "${repo_url}" "$APP_DIR"
 fi
+unset GH_TOKEN AUTH_HDR
 
 # Python venv + editable install (wheels for pandas/numpy/alpaca — no compile).
 sudo -u "$APP_USER" python3.11 -m venv "$VENV"

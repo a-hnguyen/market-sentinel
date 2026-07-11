@@ -83,6 +83,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     live = "--live" in args
     replay = "--replay" in args
+    headless = "--headless" in args  # no console (server/systemd); auto-watch
     try:
         engine = build_engine(live=live, replay=replay)
     except RuntimeError as e:
@@ -106,8 +107,14 @@ if __name__ == "__main__":
             print(f"pre-screen skipped: {e}")
 
     try:
-        # Auto-approve the pre-screen's survivors on startup only in real-data
-        # modes; mock mode stays a clean sandbox.
-        asyncio.run(run(engine, auto_approve=live or replay))
+        if headless:
+            # Server/systemd: no stdin. Auto-approve candidates and watch forever.
+            from .repl import run_headless
+
+            asyncio.run(run_headless(engine, auto_approve=live or replay))
+        else:
+            # Auto-approve the pre-screen's survivors on startup only in real-data
+            # modes; mock mode stays a clean sandbox.
+            asyncio.run(run(engine, auto_approve=live or replay))
     except KeyboardInterrupt:
         pass

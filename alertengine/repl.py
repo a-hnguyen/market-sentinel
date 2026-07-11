@@ -46,6 +46,34 @@ def _approve_from_file(engine: AlertEngine, path: str) -> None:
     print(f"approved {len(symbols)} from {path!r}: {', '.join(symbols)}")
 
 
+async def run_headless(engine: AlertEngine, auto_approve: bool = True) -> None:
+    """Non-interactive runner for server/systemd use: never reads stdin.
+
+    Auto-approves the pre-screen's survivors, then watches them until the process
+    is terminated. If nothing is approved yet (no candidates file), it idles
+    rather than exits — so the service doesn't flap on a fresh box; the pre-screen
+    timer restarts us once it has written a candidates CSV.
+    """
+    print("Trading alert engine — headless mode (no console).", flush=True)
+
+    if auto_approve and os.path.exists(settings.PRESCREEN_OUTPUT_PATH):
+        _approve_from_file(engine, settings.PRESCREEN_OUTPUT_PATH)
+
+    symbols = engine.gate.watchlist()
+    if not symbols:
+        print(
+            "no approved symbols yet; idling until the pre-screen seeds candidates.",
+            flush=True,
+        )
+        while True:
+            await asyncio.sleep(3600)
+
+    print(f"watching: {', '.join(symbols)}", flush=True)
+    await engine.watch(symbols)
+    # Feed ended (e.g. stream closed) — return so systemd restarts us cleanly.
+    print("watch loop ended; exiting for restart.", flush=True)
+
+
 async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
     print("Trading alert engine. Type 'help' for commands.")
     watch_task: asyncio.Task | None = None
