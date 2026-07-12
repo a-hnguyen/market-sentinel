@@ -47,6 +47,8 @@ infra/
 | **CloudWatch** | Engine logs + a single "engine down" alarm | core |
 | **SNS** | Infra-health alerts (not the trading channel — that's ntfy) | minimal |
 | **Lambda + EventBridge** | Thin nightly trigger → on-box pre-screen via Run Command | minimal |
+| **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | free |
+| **Resource Groups** | One console view of every `Project`-tagged resource | free |
 
 No RDS (no managed Postgres) — local disk holds `candidates.csv`/`alerts.log`, so
 the single-box shape stays at ~free-tier cost.

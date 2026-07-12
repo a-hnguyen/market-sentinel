@@ -48,6 +48,16 @@ output "prescreen_schedule" {
   value       = aws_cloudwatch_event_rule.prescreen.schedule_expression
 }
 
+output "ci_deploy_role_arn" {
+  description = "Set as the GitHub repo variable AWS_DEPLOY_ROLE_ARN (the CI workflow assumes this via OIDC)."
+  value       = aws_iam_role.ci_deploy.arn
+}
+
+output "console_overview" {
+  description = "Single-pane console view of every Project-tagged resource."
+  value       = "https://${var.region}.console.aws.amazon.com/resource-groups/group/${aws_resourcegroups_group.all.name}?region=${var.region}"
+}
+
 output "ssm_session_command" {
   description = "Open a shell on the box (no SSH). Requires the AWS CLI + Session Manager plugin."
   value       = "aws ssm start-session --target ${aws_instance.engine.id} --region ${var.region}"

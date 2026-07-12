@@ -1,0 +1,77 @@
+name: ci-cd
+
+# Test every push and PR. Deploy to the box only on a push to main, and only
+# after tests pass. Deployment uses OIDC (no AWS keys stored in GitHub).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # matches the deploy box (Amazon Linux 2023)
+
+      - name: Install (with dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Format check
+        run: black --check alertengine tests
+
+      - name: Tests
+        run: pytest tests/ -q
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to request the OIDC token
+      contents: read
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Tell the box to pull this commit and restart. The heavy lifting lives in
+      # the committed redeploy.sh; here we just fire it via SSM and surface the
+      # result (fail the job if the on-box command fails).
+      - name: Redeploy on box via SSM
+        run: |
+          set -euo pipefail
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=tag:Project,Values=market-sentinel" \
+            --document-name AWS-RunShellScript \
+            --comment "CI redeploy ${GITHUB_SHA::7}" \
+            --parameters commands='["/opt/market-sentinel/app/infra/scripts/redeploy.sh main"]' \
+            --query Command.CommandId --output text)
+          echo "SSM command: $CMD_ID"
+
+          # Wait for the command to leave the in-flight states.
+          until STATUS=$(aws ssm list-command-invocations --command-id "$CMD_ID" \
+                --query "CommandInvocations[0].Status" --output text 2>/dev/null) \
+                && [ -n "$STATUS" ] && [ "$STATUS" != "None" ] \
+                && ! echo "$STATUS" | grep -qE "Pending|InProgress|Delayed"; do
+            sleep 5
+          done
+
+          INSTANCE=$(aws ssm list-command-invocations --command-id "$CMD_ID" \
+            --query "CommandInvocations[0].InstanceId" --output text)
+          echo "----- box output -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE" \
+            --query StandardOutputContent --output text || true
+          echo "----- box stderr -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE" \
+            --query StandardErrorContent --output text || true
+
+          echo "final status: $STATUS"
+          [ "$STATUS" = "Success" ]

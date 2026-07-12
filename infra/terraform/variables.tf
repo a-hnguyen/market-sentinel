@@ -41,6 +41,18 @@ variable "repo_branch" {
   default     = "main"
 }
 
+variable "github_repo" {
+  description = "OWNER/REPO the CI deploy role trusts via OIDC."
+  type        = string
+  default     = "a-hnguyen/market-sentinel"
+}
+
+variable "create_github_oidc_provider" {
+  description = "Create the GitHub OIDC provider. Set false if the account already has one (only one per account is allowed)."
+  type        = bool
+  default     = true
+}
+
 variable "ops_email" {
   description = <<-EOT
     Email that receives ops alerts (engine down, alarm). Left empty means no SNS
