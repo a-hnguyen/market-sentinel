@@ -65,6 +65,14 @@ data "aws_iam_policy_document" "engine" {
     ]
     resources = ["${aws_cloudwatch_log_group.engine.arn}:*"]
   }
+
+  # Only the ops topic, only publish — the systemd OnFailure hook uses this to
+  # page when the engine unit crash-loops into a failed state.
+  statement {
+    sid       = "PublishOpsAlerts"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.ops.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "engine" {

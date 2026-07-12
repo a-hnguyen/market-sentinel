@@ -31,6 +31,7 @@ resource "aws_instance" "engine" {
     overlay_bucket = aws_s3_bucket.overlay.id
     ssm_prefix     = local.ssm_prefix
     log_group      = aws_cloudwatch_log_group.engine.name
+    sns_topic_arn  = aws_sns_topic.ops.arn
   })
   # Re-run bootstrap when the script or its inputs change (replaces the box).
   user_data_replace_on_change = true

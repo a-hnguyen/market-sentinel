@@ -33,6 +33,11 @@ output "public_ip" {
   value       = aws_instance.engine.public_ip
 }
 
+output "sns_topic_arn" {
+  description = "SNS topic for ops alerts (box status check + engine crash-loop)."
+  value       = aws_sns_topic.ops.arn
+}
+
 output "ssm_session_command" {
   description = "Open a shell on the box (no SSH). Requires the AWS CLI + Session Manager plugin."
   value       = "aws ssm start-session --target ${aws_instance.engine.id} --region ${var.region}"

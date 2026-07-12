@@ -1,0 +1,12 @@
+# Templated failure handler. The engine unit references this via
+#   OnFailure=market-sentinel-alert@%n.service
+# so systemd starts it (with %i = the failed unit's name) whenever the engine
+# hits its restart limit and enters a failed state. Oneshot: publish, then exit.
+[Unit]
+Description=Publish an ops alert to SNS when %i failed
+# Don't loop: if the notifier itself fails we don't want to page about paging.
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/market-sentinel/deploy.env
+ExecStart=/opt/market-sentinel/app/infra/scripts/notify-ops.sh %i

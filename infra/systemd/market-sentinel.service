@@ -6,6 +6,11 @@ Description=market-sentinel alert engine (live)
 After=network-online.target market-sentinel-config.service
 Wants=network-online.target
 Requires=market-sentinel-config.service
+# Tolerate the odd restart, but treat 5 within 5 min as a crash loop: systemd
+# gives up restarting and enters "failed", which fires the OnFailure hook below.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+OnFailure=market-sentinel-alert@%n.service
 
 [Service]
 Type=simple
@@ -15,7 +20,6 @@ EnvironmentFile=/etc/market-sentinel/engine.env
 ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine --live --headless
 Restart=always
 RestartSec=10
-# Ops alerting on repeated failure is wired in Phase 3 via OnFailure=.
 
 [Install]
 WantedBy=multi-user.target
