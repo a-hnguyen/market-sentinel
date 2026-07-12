@@ -62,9 +62,10 @@ chmod 600 /etc/market-sentinel/deploy.env
 sudo -u "$APP_USER" mkdir -p "$APP_DIR/alertengine/data"
 
 # Install systemd units from the repo and start everything. The config unit runs
-# first (fetch secrets + sync overlay); engine + prescreen timer depend on it.
-install -m 0644 "$APP_DIR"/infra/systemd/*.service "$APP_DIR"/infra/systemd/*.timer /etc/systemd/system/
+# first (fetch secrets + sync overlay); the engine depends on it. The pre-screen
+# is a oneshot unit with no timer — EventBridge triggers it via SSM (see
+# eventbridge.tf), so only the config + engine units are enabled here.
+install -m 0644 "$APP_DIR"/infra/systemd/*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now market-sentinel-config.service
 systemctl enable --now market-sentinel.service
-systemctl enable --now market-sentinel-prescreen.timer

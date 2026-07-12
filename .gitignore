@@ -35,3 +35,6 @@ crash.log
 crash.*.log
 # Lambda build artifacts
 infra/lambda/**/*.zip
+
+# Terraform Lambda build artifacts
+infra/terraform/.build/

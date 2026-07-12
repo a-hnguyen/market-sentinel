@@ -38,6 +38,16 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.ops.arn
 }
 
+output "prescreen_trigger_lambda" {
+  description = "Lambda that EventBridge invokes to kick off the pre-screen."
+  value       = aws_lambda_function.prescreen_trigger.function_name
+}
+
+output "prescreen_schedule" {
+  description = "EventBridge cron (UTC) for the pre-screen trigger."
+  value       = aws_cloudwatch_event_rule.prescreen.schedule_expression
+}
+
 output "ssm_session_command" {
   description = "Open a shell on the box (no SSH). Requires the AWS CLI + Session Manager plugin."
   value       = "aws ssm start-session --target ${aws_instance.engine.id} --region ${var.region}"
