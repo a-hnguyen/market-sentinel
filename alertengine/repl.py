@@ -51,8 +51,8 @@ async def run_headless(engine: AlertEngine, auto_approve: bool = True) -> None:
 
     Auto-approves the pre-screen's survivors, then watches them until the process
     is terminated. If nothing is approved yet (no candidates file), it idles
-    rather than exits — so the service doesn't flap on a fresh box; the pre-screen
-    timer restarts us once it has written a candidates CSV.
+    rather than exits — so the service doesn't flap on a fresh box; the scheduled
+    pre-screen restarts us once it has written a candidates CSV.
     """
     print("Trading alert engine — headless mode (no console).", flush=True)
 

@@ -2,7 +2,8 @@
 
 Infrastructure-as-code for the **lean single-box** deploy (Shape 1 in
 [`../ARCHITECTURE.md`](../ARCHITECTURE.md)): one always-on EC2 instance runs the
-alert engine as a systemd service, with a nightly pre-screen timer. Everything is
+alert engine as a systemd service; the nightly pre-screen is triggered by
+EventBridge → Lambda → SSM Run Command (no on-box timer). Everything is
 provisioned with Terraform; the box is administered through SSM Session Manager
 (no SSH, no open inbound ports).
 
@@ -29,9 +30,9 @@ infra/
     bootstrap-state.sh  # one-time: create the state bucket + lock table
   # added in later phases:
   #   terraform/ec2.tf, user_data.sh.tftpl   (Phase 2)
-  #   systemd/*.service, *.timer             (Phase 2)
+  #   systemd/*.service                      (Phase 2)
   #   terraform/sns.tf + alarm               (Phase 3)
-  #   lambda/prescreen_trigger/, lambda.tf   (Phase 4)
+  #   lambda/, lambda.tf, eventbridge.tf     (Phase 4)
   #   ../.github/workflows/deploy.yml        (Phase 5)
 ```
 

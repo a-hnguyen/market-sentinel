@@ -31,6 +31,7 @@ infra/terraform/.terraform.lock.hcl
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+*.tfplan
 crash.log
 crash.*.log
 # Lambda build artifacts
