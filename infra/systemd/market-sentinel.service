@@ -1,5 +1,6 @@
 # The always-on alert engine: holds the Alpaca websocket, evaluates rules, pushes
-# alerts. Depends on the config unit having populated the EnvironmentFile. On
+# alerts and hosts the Discord remote control. Depends on the config unit having
+# populated the EnvironmentFile. On
 # startup it auto-approves the latest candidates.csv the pre-screen wrote.
 [Unit]
 Description=market-sentinel alert engine (live)

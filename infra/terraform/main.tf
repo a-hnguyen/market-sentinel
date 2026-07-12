@@ -19,7 +19,7 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 # Use the account's default VPC + its subnets. The engine only makes OUTBOUND
-# connections (Alpaca websocket, ntfy, S3, SSM), so it needs no custom network —
+# connections (Alpaca/Discord websockets, S3, SSM), so it needs no custom network —
 # the default VPC's public subnets with a no-inbound security group are enough.
 data "aws_vpc" "default" {
   default = true

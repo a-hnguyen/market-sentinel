@@ -45,7 +45,7 @@ infra/
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
 | **S3** | Private overlay (strategy IP) + candidate/alert archives | core |
 | **CloudWatch** | Engine logs + a single "engine down" alarm | core |
-| **SNS** | Infra-health alerts (not the trading channel — that's ntfy) | minimal |
+| **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge** | Thin nightly trigger → on-box pre-screen via Run Command | minimal |
 | **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | free |
 | **Resource Groups** | One console view of every `Project`-tagged resource | free |
@@ -74,7 +74,10 @@ terraform apply -target=aws_ssm_parameter.config -target=aws_s3_bucket.overlay
 # 4. Set the real secrets into the SSM slots.
 aws ssm put-parameter --name /market-sentinel/alpaca_api_key    --type SecureString --value 'PK...' --overwrite
 aws ssm put-parameter --name /market-sentinel/alpaca_secret_key --type SecureString --value '...'   --overwrite
-aws ssm put-parameter --name /market-sentinel/ntfy_topic        --type SecureString --value '...'   --overwrite
+aws ssm put-parameter --name /market-sentinel/discord_bot_token        --type SecureString --value '...' --overwrite
+aws ssm put-parameter --name /market-sentinel/discord_guild_id         --type SecureString --value '...' --overwrite
+aws ssm put-parameter --name /market-sentinel/discord_channel_id       --type SecureString --value '...' --overwrite
+aws ssm put-parameter --name /market-sentinel/discord_allowed_user_ids --type SecureString --value '111...,222...' --overwrite
 # Private repo only: a fine-grained GitHub PAT (Contents:read on THIS repo) so the
 # box can clone. Skip this and make the repo public to clone without a token.
 aws ssm put-parameter --name /market-sentinel/github_token      --type SecureString --value 'github_pat_...' --overwrite

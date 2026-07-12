@@ -18,7 +18,6 @@ Screener/DataFeed get constructed here — the engine is untouched.
 """
 
 import asyncio
-import os
 import sys
 
 from dotenv import load_dotenv
@@ -26,28 +25,14 @@ from dotenv import load_dotenv
 from . import settings
 from .engine import AlertEngine
 from .gate import ApprovalGate
-from .interfaces import Notifier
 from .notifiers.console_notifier import ConsoleNotifier
 from .repl import run
 from .rules.bb_rsi_exit_rule import BBRSIExitRule
 from .rules.bb_rsi_rule import BBRSIRule
 
 
-def _build_notifier() -> Notifier:
-    """Console always; add ntfy phone/desktop push when NTFY_TOPIC is set."""
-    notifiers: list[Notifier] = [ConsoleNotifier()]
-    if os.environ.get("NTFY_TOPIC"):
-        from .notifiers.ntfy_notifier import NtfyNotifier
-        from .notifiers.multi_notifier import MultiNotifier
-
-        notifiers.append(NtfyNotifier())
-        print(f"ntfy push enabled → topic '{os.environ['NTFY_TOPIC']}'")
-        return MultiNotifier(notifiers)
-    return notifiers[0]
-
-
 def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
-    load_dotenv()  # pull ALPACA_* / NTFY_* from .env if present
+    load_dotenv()  # pull ALPACA_* / DISCORD_* from .env if present
     if live or replay:
         from .screeners.yfinance_screener import YFinanceScreener
 
@@ -74,7 +59,7 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         feed=feed,
         rule=BBRSIRule(),
         exit_rule=BBRSIExitRule(),  # SELL side: overbought -> two red closes
-        notifier=_build_notifier(),
+        notifier=ConsoleNotifier(),
         gate=ApprovalGate(),
     )
 
@@ -108,10 +93,10 @@ if __name__ == "__main__":
 
     try:
         if headless:
-            # Server/systemd: no stdin. Auto-approve candidates and watch forever.
-            from .repl import run_headless
+            # Server/systemd: Discord is the remote REPL and alert channel.
+            from .discord_bot import run_discord
 
-            asyncio.run(run_headless(engine, auto_approve=live or replay))
+            asyncio.run(run_discord(engine, auto_approve=live or replay))
         else:
             # Auto-approve the pre-screen's survivors on startup only in real-data
             # modes; mock mode stays a clean sandbox.

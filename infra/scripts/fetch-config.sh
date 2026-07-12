@@ -16,15 +16,18 @@ get() {
 
 api_key=$(get alpaca_api_key)
 secret_key=$(get alpaca_secret_key)
-ntfy_topic=$(get ntfy_topic)
+discord_bot_token=$(get discord_bot_token)
+discord_guild_id=$(get discord_guild_id)
+discord_channel_id=$(get discord_channel_id)
+discord_allowed_user_ids=$(get discord_allowed_user_ids)
 
 {
   echo "ALPACA_API_KEY=$api_key"
   echo "ALPACA_SECRET_KEY=$secret_key"
-  # Only enable ntfy push when a real topic is set (placeholder = console-only).
-  if [ "$ntfy_topic" != "SET_ME" ] && [ -n "$ntfy_topic" ]; then
-    echo "NTFY_TOPIC=$ntfy_topic"
-  fi
+  echo "DISCORD_BOT_TOKEN=$discord_bot_token"
+  echo "DISCORD_GUILD_ID=$discord_guild_id"
+  echo "DISCORD_CHANNEL_ID=$discord_channel_id"
+  echo "DISCORD_ALLOWED_USER_IDS=$discord_allowed_user_ids"
 } > "$ENV_FILE"
 
 # Readable only by the service user that runs the engine.

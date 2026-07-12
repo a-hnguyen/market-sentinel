@@ -12,6 +12,7 @@ dependencies = [
     "alpaca-py",     # real-time 1-min bar feed
     "python-dotenv", # load ALPACA_* from .env
     "tzdata",        # zoneinfo tz database (needed on Windows; no-op elsewhere)
+    "discord.py>=2.5,<3", # private slash-command control + alert delivery
 ]
 
 [project.optional-dependencies]

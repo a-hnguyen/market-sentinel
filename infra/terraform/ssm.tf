@@ -10,9 +10,12 @@ locals {
   ssm_prefix = "/${local.name}"
 
   ssm_params = {
-    alpaca_api_key    = "SET_ME"
-    alpaca_secret_key = "SET_ME"
-    ntfy_topic        = "SET_ME"
+    alpaca_api_key           = "SET_ME"
+    alpaca_secret_key        = "SET_ME"
+    discord_bot_token        = "SET_ME"
+    discord_guild_id         = "SET_ME"
+    discord_channel_id       = "SET_ME"
+    discord_allowed_user_ids = "SET_ME"
     # Read-only GitHub token so the box can clone the PRIVATE repo. Set to a
     # fine-grained PAT with Contents:read on this repo only. Leave as SET_ME and
     # make the repo public instead if you'd rather not manage a token.

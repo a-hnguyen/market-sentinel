@@ -139,6 +139,9 @@ class AlertEngine:
         """Consume 1-min bars for `symbols`, aggregate to 2-min, evaluate the
         rule, and notify (with de-dup). Runs until the feed ends or is cancelled.
         """
+        # A WatchController may intentionally restart the stream when the remote
+        # watchlist changes. Never carry a half-built bucket across subscriptions.
+        self._agg = BarAggregator()
         self.watching = True
         try:
             await self._backfill(symbols)

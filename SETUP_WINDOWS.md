@@ -51,23 +51,15 @@ them separately. Place them exactly here:
 | `.env`                            | project root (next to `pyproject.toml`) |
 | `settings_local.py`               | `alertengine\` folder       |
 
-`.env` contains your Alpaca keys and the `NTFY_TOPIC`. `settings_local.py`
-contains the screening settings. Without both, the engine won't connect or
-screen correctly.
+`.env` contains your Alpaca keys and Discord bot configuration.
+`settings_local.py` contains the screening settings. Without both, the engine
+won't connect or screen correctly.
 
-## 5. Set up push notifications (ntfy)
+## 5. Set up Discord control and alerts
 
-Alerts are delivered through **ntfy**, a free push service. Subscribe every
-device you want buzzed to the topic name (it's the `NTFY_TOPIC` value in `.env`).
-
-- **Phone (for when you're AFK):** install the **ntfy** app from the App Store
-  or Play Store → tap **+** → enter the exact topic name → Subscribe.
-- **This desktop:** open <https://ntfy.sh> in your browser → subscribe to the
-  same topic → click **"Install app"** (or the install icon in the address bar)
-  so notifications pop even when the browser is minimized.
-
-The topic name is a shared secret — anyone who knows it can read your alerts, so
-don't post it anywhere public.
+Follow `DISCORD_SETUP.md` once to create the private bot/channel and put its token
+and numeric IDs in `.env`. Only allowlisted users in that server/channel can run
+the market commands. Never share or commit the bot token.
 
 ## 6. Test it before you rely on it
 
@@ -75,12 +67,12 @@ Run the engine in **replay mode**, which pulls real recent market data and works
 any time — nights, weekends, holidays. Do this **with your phone next to you**:
 
 ```powershell
-python -m alertengine --replay
+python -m alertengine --replay --headless
 ```
 
-You should see the screen table print, then alerts scroll by — and your phone
-should buzz with ntfy notifications. If the phone stays silent, the topic
-subscription (step 5) is wrong. Fix it now, not at market open.
+Use `/watch AAPL`, `/status`, and `/watchlist` in the private Discord channel.
+The bot should respond there and post alert embeds during replay. Fix bot access
+before relying on it at market open.
 
 ## 7. Run it live
 
@@ -106,8 +98,9 @@ morning.
 
 - **`python` not recognized** — the PATH box wasn't checked in step 1.
   Reinstall Python and check it, or use `py -m alertengine ...` instead.
-- **No phone alerts** — confirm the topic in the ntfy app exactly matches
-  `NTFY_TOPIC` in `.env` (no typos, no extra spaces).
+- **Discord bot offline** — confirm the token and all IDs in `.env`, ensure the
+  bot is in the server, and confirm it can View Channel, Send Messages, and
+  Embed Links.
 - **Connection / auth error at startup** — `.env` is missing or the Alpaca keys
   are wrong. Check the file is in the project root, not a subfolder.
 - **Times look off** — timestamps are shown in Pacific; the `tzdata` package

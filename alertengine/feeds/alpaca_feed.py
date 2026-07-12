@@ -42,7 +42,6 @@ class AlpacaFeed(DataFeed):
                 "Missing Alpaca credentials: set ALPACA_API_KEY and "
                 "ALPACA_SECRET_KEY (e.g. in a .env file)."
             )
-        self._stream = StockDataStream(key, secret, feed=feed)
         self._key = key
         self._secret = secret
         self._feed = feed
@@ -118,13 +117,17 @@ class AlpacaFeed(DataFeed):
         }
 
     async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]:
+        # Build a fresh client for every subscription. The remote controller
+        # restarts this generator when /watch or /unwatch changes the symbols;
+        # alpaca-py's stopped websocket object is not safely reusable.
+        stream = StockDataStream(self._key, self._secret, feed=self._feed)
         queue: asyncio.Queue = asyncio.Queue()
 
         async def handler(abar) -> None:
             await queue.put(abar)
 
-        self._stream.subscribe_bars(handler, *[s.upper() for s in symbols])
-        run_task = asyncio.create_task(self._stream._run_forever())
+        stream.subscribe_bars(handler, *[s.upper() for s in symbols])
+        run_task = asyncio.create_task(stream._run_forever())
         try:
             while True:
                 abar = await queue.get()
@@ -132,4 +135,4 @@ class AlpacaFeed(DataFeed):
         finally:
             run_task.cancel()
             with suppress(Exception):
-                await self._stream.stop_ws()
+                await stream.stop_ws()

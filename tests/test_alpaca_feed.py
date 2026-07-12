@@ -47,9 +47,11 @@ def test_to_bar_maps_alpaca_bar():
 
 
 def test_construct_with_explicit_keys_does_not_connect():
-    # Constructing must not open a socket; just holds a configured stream client.
+    # Constructing must not open a socket; clients are made per subscription so
+    # the Discord controller can safely restart after watchlist changes.
     feed = AlpacaFeed(api_key="fake", secret_key="fake")
-    assert feed._stream is not None
+    assert feed._key == "fake"
+    assert feed._secret == "fake"
 
 
 def _abar(symbol, minute, close):

@@ -57,7 +57,7 @@ variable "ops_email" {
   description = <<-EOT
     Email that receives ops alerts (engine down, alarm). Left empty means no SNS
     subscription is created — set it to get notified. This is NOT the trading
-    alert channel (that stays ntfy); this is infra health only.
+    alert/control channel (Discord); this is infra health only.
   EOT
   type        = string
   default     = ""

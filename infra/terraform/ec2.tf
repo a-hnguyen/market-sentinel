@@ -19,7 +19,7 @@ resource "aws_instance" "engine" {
   subnet_id              = data.aws_subnets.default.ids[0]
 
   # Default subnets are public; the box needs a public IP for outbound egress
-  # (Alpaca/ntfy/S3/SSM) via the internet gateway. Nothing listens inbound.
+  # (Alpaca/Discord/S3/SSM) via the internet gateway. Nothing listens inbound.
   associate_public_ip_address = true
 
   # Bootstrap: clone repo, write deploy.env, install units, enable services.

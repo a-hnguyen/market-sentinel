@@ -1,7 +1,6 @@
-"""Integration: the two-stage machine + MultiNotifier route each stage to the
-right channel. WATCH (armed setup) is console-only; BUY (two-green confirm) goes
-to console AND phone. This wires the real ConsoleNotifier and real NtfyNotifier
-(network mocked) behind a MultiNotifier, exactly as `__main__` does in live mode.
+"""Integration: the state machine fans every remote-visible stage to console
+and chat. Discord replaces the local REPL, so both the arm and confirmation are
+useful remotely.
 """
 
 import asyncio
@@ -10,11 +9,10 @@ from typing import AsyncIterator
 
 from alertengine.engine import AlertEngine
 from alertengine.gate import ApprovalGate
-from alertengine.interfaces import AlertRule, DataFeed
+from alertengine.interfaces import AlertRule, DataFeed, Notifier
 from alertengine.models import Alert, Bar
 from alertengine.notifiers.console_notifier import ConsoleNotifier
 from alertengine.notifiers.multi_notifier import MultiNotifier
-from alertengine.notifiers.ntfy_notifier import NtfyNotifier
 from alertengine.screeners.mock_screener import MockScreener
 
 BASE = datetime(2026, 7, 2, 14, 0, tzinfo=timezone.utc)
@@ -53,28 +51,22 @@ def _bar(i, green):
     )
 
 
-def test_watch_console_only_buy_goes_to_both(tmp_path, capsys, monkeypatch):
-    posts = {"n": 0}
+class _Chat(Notifier):
+    def __init__(self):
+        self.alerts = []
 
-    def fake_urlopen(req, timeout=None):
-        posts["n"] += 1
+    async def send(self, alert):
+        self.alerts.append(alert)
 
-        class _Resp:
-            pass
 
-        return _Resp()
-
-    monkeypatch.setattr(
-        "alertengine.notifiers.ntfy_notifier.urllib.request.urlopen", fake_urlopen
-    )
-
+def test_watch_and_buy_go_to_console_and_chat(tmp_path, capsys):
     console = ConsoleNotifier(logfile=str(tmp_path / "alerts.log"))
-    phone = NtfyNotifier(topic="t")
+    chat = _Chat()
     engine = AlertEngine(
         screener=MockScreener(),
         feed=_DummyFeed(),
         rule=_ArmOnceRule(),
-        notifier=MultiNotifier([console, phone]),
+        notifier=MultiNotifier([console, chat]),
         gate=ApprovalGate(),
     )
 
@@ -86,8 +78,18 @@ def test_watch_console_only_buy_goes_to_both(tmp_path, capsys, monkeypatch):
     asyncio.run(drive())
 
     out = capsys.readouterr().out
-    # Console saw both stages...
     assert "[WATCH" in out
     assert "[BUY" in out
-    # ...but the phone was hit exactly once — for the BUY, not the WATCH.
-    assert posts["n"] == 1
+    assert [a.kind for a in chat.alerts] == ["watch", "buy"]
+
+
+def test_multi_notifier_isolates_a_failed_channel():
+    class _Broken(Notifier):
+        async def send(self, alert):
+            raise RuntimeError("offline")
+
+    first, second = _Chat(), _Chat()
+    alert = Alert("AAPL", BASE, "test", "hello")
+    asyncio.run(MultiNotifier([first, _Broken(), second]).send(alert))
+    assert first.alerts == [alert]
+    assert second.alerts == [alert]

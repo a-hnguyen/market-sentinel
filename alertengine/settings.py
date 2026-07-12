@@ -37,6 +37,7 @@ PRESCREEN_FAST_LOOKBACK_DAYS = 30  # ~1 month of fast bars
 PRESCREEN_RSI_THRESHOLD = RSI_OVERSOLD  # reuse the standard oversold line
 PRESCREEN_WATCHLIST_PATH = "alertengine/data/watchlist.xls"  # git-ignored input
 PRESCREEN_OUTPUT_PATH = "candidates.csv"  # nightly survivors (git-ignored *.csv)
+MANUAL_WATCHLIST_PATH = "alertengine/data/manual_watchlist.txt"
 
 # De-dup / cooldown: min 2-min bars after a buy alert (and setup must clear)
 # before a symbol can re-arm. Prevents re-firing on the same oversold episode.

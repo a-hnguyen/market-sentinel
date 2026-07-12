@@ -1,4 +1,4 @@
-"""Fan an alert out to several notifiers (e.g. console + ntfy push).
+"""Fan an alert out to several notifiers (e.g. console + Discord).
 
 Each notifier is sent to independently; one failing (or being slow) does not
 stop the others from receiving the alert.

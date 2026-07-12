@@ -65,8 +65,9 @@ python -m alertengine --live       # live — yfinance screen + Alpaca 1-min fee
 ```
 
 Live mode needs `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` in a `.env` (copy
-`.env.example`). Mock<->live only swaps which Screener/DataFeed `__main__`
-builds; the engine is identical.
+`.env.example`). Headless mode also needs the four `DISCORD_*` values.
+Mock<->live only swaps which Screener/DataFeed `__main__` builds; the engine is
+identical.
 
 - Tests use `asyncio.run(...)`, **not** a `pytest.mark.asyncio` marker — keep it
   that way so no `pytest-asyncio` dependency is required.
