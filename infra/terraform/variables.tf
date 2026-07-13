@@ -12,9 +12,9 @@ variable "region" {
 
 variable "instance_type" {
   description = <<-EOT
-    EC2 size. t3.micro is free-tier eligible (x86, 750 hrs/mo for the first 12
-    months on a new account). t4g.small (ARM/Graviton) is a touch cheaper past
-    the free tier but is NOT free-tier; keep t3.micro for year one.
+    EC2 size. t3.micro is the tested x86 default for this low-throughput service.
+    Credits and free-tier eligibility vary by account/program; verify pricing
+    before changing the instance or relying on a discount.
   EOT
   type        = string
   default     = "t3.micro"
@@ -30,7 +30,7 @@ variable "ami_id" {
 }
 
 variable "repo_url" {
-  description = "Public git repo the box clones on first boot."
+  description = "Git repository the box clones on first boot. Private repos use the SSM GitHub token."
   type        = string
   default     = "https://github.com/a-hnguyen/market-sentinel.git"
 }

@@ -32,6 +32,8 @@ async def _run_full_pipeline():
         rule=BBRSIRule(),
         notifier=notifier,
         gate=gate,
+        window_start="00:00",
+        window_end="23:59",
     )
 
     candidates = await engine.screen()
@@ -65,6 +67,8 @@ async def _run_dedup():
         notifier=notifier,
         gate=ApprovalGate(),
         cooldown_bars=5,
+        window_start="00:00",
+        window_end="23:59",
     )
     await engine.watch(["MOCK"])
     # Far fewer alerts than 2-min bars seen -> not firing every bar.

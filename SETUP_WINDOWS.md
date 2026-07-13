@@ -29,7 +29,7 @@ cd market-sentinel
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 If PowerShell blocks the activate script with an execution-policy error, run
@@ -52,9 +52,9 @@ them separately. Place them exactly here:
 | `settings_local.py`               | `alertengine\` folder       |
 
 `.env` needs the Alpaca keys for live/replay. `settings_local.py` contains the
-private screening settings. Discord values are needed only if intentionally
-running `--headless`; do not start a second headless process while production is
-using the same bot token.
+private screening and alert-window settings. Discord values are needed only if
+intentionally running `--headless`; do not start a second headless process while
+production is using the same bot token.
 
 ## 5. Discord is already the production control
 
@@ -62,6 +62,13 @@ See `DISCORD_SETUP.md` for the EC2 configuration. Normal Windows development
 uses the local REPL and does not connect another Discord Gateway session.
 
 ## 6. Test it before you rely on it
+
+First run the automated checks:
+
+```powershell
+python -m black --check alertengine tests
+python -m pytest tests -q
+```
 
 Run replay mode, which pulls recent market data and works nights, weekends, and
 holidays:
@@ -71,7 +78,9 @@ python -m alertengine --replay
 ```
 
 Use the REPL: `approve AAPL`, `watch`, `status`, then `stop`/`quit`. Replay alerts
-are clearly isolated from the production Discord bot.
+are isolated from the production Discord bot. Replay still enforces the alert
+window against each historical bar's timestamp, so only bars inside the
+configured Pacific window can arm or confirm an alert.
 
 ## 7. Run it live
 
@@ -101,3 +110,5 @@ morning.
   are wrong. Check the file is in the project root, not a subfolder.
 - **Times look off** — timestamps are shown in Pacific; the `tzdata` package
   (installed in step 3) provides the timezone data Windows needs.
+- **No replay alert appears** — check the `alert_window` object in `status` and
+  confirm the replayed bars fall inside `WINDOW_START`/`WINDOW_END`.

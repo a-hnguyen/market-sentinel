@@ -13,7 +13,10 @@ RSI_PERIOD = 14
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70  # used by the public textbook SELL setup
 
-# Trading window, local time — permissive placeholder (real hours in settings_local).
+# Alert window, Pacific time — permissive placeholder (real hours in
+# settings_local). Bars outside this window still warm indicator history, but
+# cannot arm or advance an alert.
+ALERT_TIMEZONE = "America/Los_Angeles"
 WINDOW_START = "00:00"
 WINDOW_END = "23:59"
 
@@ -36,7 +39,7 @@ PRESCREEN_FAST_HOURS = 1  # fast timeframe (hours per bar)
 PRESCREEN_FAST_LOOKBACK_DAYS = 30  # ~1 month of fast bars
 PRESCREEN_RSI_THRESHOLD = RSI_OVERSOLD  # reuse the standard oversold line
 PRESCREEN_WATCHLIST_PATH = "alertengine/data/watchlist.xls"  # git-ignored input
-PRESCREEN_OUTPUT_PATH = "candidates.csv"  # nightly survivors (git-ignored *.csv)
+PRESCREEN_OUTPUT_PATH = "candidates.csv"  # scheduled survivors (git-ignored *.csv)
 PRESCREEN_TIMEOUT_SECONDS = 300  # keep an Alpaca/API stall from wedging the bot
 MANUAL_WATCHLIST_PATH = "alertengine/data/manual_watchlist.txt"
 

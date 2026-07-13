@@ -57,6 +57,8 @@ data "aws_iam_policy_document" "engine" {
   }
 
   statement {
+    # Reserved for a future CloudWatch agent; no engine log shipper is installed
+    # in the current user-data bootstrap.
     sid = "ShipLogs"
     actions = [
       "logs:CreateLogStream",

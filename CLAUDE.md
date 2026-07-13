@@ -29,23 +29,30 @@ orders are ever placed.** See `BUILD_SPEC.md` for the full v1 build spec
 
 ## Architecture
 
+Read `ARCHITECTURE.md` first for the full current-state walkthrough. The compact
+path is:
+
 ```
 Discord/REPL ─▶ WatchController ─▶ [ApprovalGate] ─▶ DataFeed(1-min)
                                                           │
                                                    aggregator(2-min)
                                                         │
+                                              history + AlertWindow
+                                                        │
                                               indicators (BB, RSI)
                                                         │
-                                          AlertRule (bb_rsi_layer1)
+                                         buy/sell AlertRules
                                                         │
-                                    engine de-dup/cooldown ─▶ Notifier
+                              confirmation machines/cooldown ─▶ Notifier
 ```
 
 - `alertengine/aggregator.py` — folds 1-min → clock-aligned 2-min bars
   (flush-on-advance; handles IEX missing-minute). Alpaca has no native 2-min
   stream, hence the aggregation.
-- `alertengine/engine.py` — owns all state: per-symbol 2-min history +
-  armed/cooldown de-dup. Keeps `AlertRule` stateless.
+- `alertengine/engine.py` — owns per-symbol 2-min history and confirmation
+  machines. Keeps `AlertRule` stateless.
+- `alertengine/alert_window.py` — owns strict time parsing and Pacific/DST window
+  checks. Outside-window bars warm history but cannot evaluate or advance alerts.
 - `alertengine/watch_controller.py` — owns start/stop/restart of the active
   subscription when Discord or the REPL changes the watchlist.
 - `alertengine/discord_bot.py` — allowlisted slash commands + alert delivery;
@@ -66,6 +73,7 @@ Use the project venv (`.venv`), never the `tesorai` env:
 source .venv/bin/activate
 pytest tests/ -q                   # run all tests (no plugins needed)
 python -m alertengine              # mock mode — synthetic bars, no API keys
+python -m alertengine --replay     # historical Alpaca bars through the same engine
 python -m alertengine --live       # live — yfinance screen + Alpaca 1-min feed
 python -m alertengine --live --headless  # production Discord control
 # REPL: screen → approve <SYMS> → watch → status → quit
@@ -90,9 +98,21 @@ identical.
   `discord.py` (remote control/alerts), `python-dotenv` (`.env` loading). Install
   with `pip install -e ".[dev]"` in the venv.
 
+## Documentation convention
+
+- `README.md` is the public entry point; `ARCHITECTURE.md` describes current
+  behavior and ownership; `infra/README.md` is the production runbook.
+- `BUILD_SPEC.md` is the detailed private contract. `Trading_Bot_Context.md` and
+  `JS_Context.md` contain decision history/interview material and must label
+  superseded ideas instead of presenting them as deployed behavior.
+- When runtime behavior changes, update the current-state docs in the same pass.
+  Verify commands, schedules, persistence, logging, and failure behavior against
+  code/IaC rather than copying old plans forward.
+
 ## Status / roadmap
 
 Build Order steps 1–10 are **built and tested**. The lean AWS stack, scheduled
 pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
-Next: production market-session soak test, then the private strategy module and
-deferred dashboard tier. See `BUILD_SPEC.md` for current status.
+Application logs currently live in journald and are inspected through SSM; do
+not claim the provisioned CloudWatch engine log group is receiving them until a
+shipping agent is actually configured. See `BUILD_SPEC.md` for current status.

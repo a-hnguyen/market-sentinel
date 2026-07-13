@@ -1,7 +1,7 @@
 """One-call pre-screen pipeline: watchlist -> RSI confluence -> candidates CSV.
 
 Shared by all three entry points so the logic lives in exactly one place:
-  * `python -m alertengine.prescreen`      (standalone / cron)
+  * `python -m alertengine.prescreen`      (standalone / scheduled)
   * `python -m alertengine --prescreen`    (refresh at engine startup)
   * the REPL/Discord `prescreen` command   (refresh on demand)
 

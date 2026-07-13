@@ -9,8 +9,9 @@ Gateway; the EC2 security group keeps zero inbound ports.
 1. In the Discord Developer Portal, create an application and add a bot.
 2. Reset/copy the bot token and store it immediately; never put it in git or chat.
 3. Under OAuth2 URL Generator, select `bot` and `applications.commands`.
-4. Grant only **View Channels**, **Send Messages**, and **Embed Links**, then use
-   the generated URL to add the bot to the private server.
+4. Grant only **View Channels**, **Send Messages**, **Embed Links**, and **Attach
+   Files**, then use the generated URL to add the bot to the private server.
+   Attach Files is needed when a large `/status` response is returned as JSON.
 
 The bot uses slash commands, so it does **not** need the privileged Message
 Content intent.
@@ -36,7 +37,17 @@ aws ssm put-parameter --name /market-sentinel/discord_guild_id \
 aws ssm put-parameter --name /market-sentinel/discord_channel_id \
   --type SecureString --value 'CHANNEL_ID' --overwrite
 aws ssm put-parameter --name /market-sentinel/discord_allowed_user_ids \
-  --type SecureString --value 'USER_ID,DAD_USER_ID' --overwrite
+  --type SecureString --value 'USER_ID,SECOND_USER_ID' --overwrite
+```
+
+After changing an existing SSM value, refresh the on-box environment and restart
+the bot:
+
+```bash
+aws ssm send-command \
+  --targets 'Key=tag:Project,Values=market-sentinel' \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["systemctl restart market-sentinel-config.service","systemctl restart market-sentinel.service"]'
 ```
 
 For local testing, put the same four names in the git-ignored `.env` instead.
@@ -63,3 +74,13 @@ replay should use the normal console REPL (`python -m alertengine --replay`).
 
 Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 `/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
+
+- `/watch STOCK` persists the symbol and starts/restarts streaming immediately.
+- `/unwatch STOCK` removes it from the current gate and manual-symbol file. If
+  the same symbol remains in `candidates.csv`, it can return after a restart.
+- `/stop confirm:true` stops only market streaming; Discord stays online and
+  `/start` resumes the existing watchlist.
+- `/prescreen` responds immediately, scans in a background child process, and
+  posts the result later. A second request is rejected while one is running.
+- `/status` includes watcher state, per-symbol state, and whether the configured
+  Pacific alert window is currently open.

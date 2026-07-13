@@ -1,6 +1,6 @@
 #!/bin/bash
 # First-boot bootstrap for the market-sentinel engine box. Kept thin: it installs
-# runtime deps, clones the (public) repo, drops one templated deploy.env with the
+# runtime deps, clones the repo, drops one templated deploy.env with the
 # account-specific values, then hands off to the committed scripts + systemd units
 # in infra/. Secrets (SSM) and the private overlay (S3) are pulled at service
 # start by the config unit — never baked into the image or this script.

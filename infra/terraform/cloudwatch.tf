@@ -1,6 +1,6 @@
-# Log group for the engine's stdout/journald (shipped by the CloudWatch agent,
-# configured in user_data). Defined in the foundation because the instance role
-# policy scopes log writes to this exact group. Retention keeps cost near-zero.
+# Reserved log group for future engine journal shipping. No CloudWatch agent is
+# installed today; engine logs remain in journald and are inspected through SSM.
+# The instance role is already scoped to this group if shipping is added later.
 #
 resource "aws_cloudwatch_log_group" "engine" {
   name              = "/${local.name}/engine"

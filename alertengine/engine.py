@@ -14,10 +14,12 @@ direction differ.
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 
 from . import settings
 from .aggregator import BarAggregator
+from .alert_window import AlertWindow
 from .gate import ApprovalGate
 from .interfaces import AlertRule, DataFeed, Notifier, Screener
 from .models import Alert, Bar, Candidate
@@ -53,6 +55,13 @@ class _DirectionMachine:
         """A confirming close: green (up) for long, red (down) for short."""
         return bar.close > bar.open if self.long else bar.close < bar.open
 
+    def reset(self) -> None:
+        """Return the machine and all of its counters to the initial state."""
+        self.phase = Phase.WAITING
+        self.consecutive = 0
+        self.bars_since_arm = 0
+        self.bars_since_alert = 0
+
     @property
     def watch_kind(self) -> str:
         return "watch" if self.long else "sell_watch"
@@ -73,8 +82,8 @@ class _SymbolState:
     bars_seen: int = 0
     history: list[Bar] = field(default_factory=list)
 
-    def machines(self) -> list[_DirectionMachine]:
-        return [self.long] if self.short is None else [self.long, self.short]
+    def machines(self) -> tuple[_DirectionMachine, ...]:
+        return (self.long,) if self.short is None else (self.long, self.short)
 
 
 class AlertEngine:
@@ -91,6 +100,9 @@ class AlertEngine:
         confirm_red_bars: int = settings.CONFIRM_RED_BARS,
         arm_timeout_bars: int = settings.ARM_TIMEOUT_BARS,
         max_history: int = 200,
+        window_start: str = settings.WINDOW_START,
+        window_end: str = settings.WINDOW_END,
+        alert_timezone: str = settings.ALERT_TIMEZONE,
     ) -> None:
         self.screener = screener
         self.feed = feed
@@ -103,6 +115,9 @@ class AlertEngine:
         self.confirm_red_bars = confirm_red_bars
         self.arm_timeout_bars = arm_timeout_bars
         self.max_history = max_history
+        self._alert_window = AlertWindow.from_strings(
+            window_start, window_end, alert_timezone
+        )
 
         self._agg = BarAggregator()
         self._states: dict[str, _SymbolState] = {}
@@ -199,6 +214,14 @@ class AlertEngine:
         if len(state.history) > self.max_history:
             del state.history[: -self.max_history]
 
+        # This is an alert window, not a data window: keep the indicator history
+        # warm around the clock, but do not arm or advance either confirmation
+        # machine outside the configured local hours. Resetting volatile machine
+        # state prevents a prior window's setup from confirming in a later one.
+        if not self._alert_window.contains(bar.timestamp):
+            self._reset_machines(state)
+            return
+
         # The setup rules only *arm* their machine — the final alert fires on the
         # two-close confirmation, not here. Evaluate long always, short only when
         # an exit rule is wired.
@@ -209,68 +232,77 @@ class AlertEngine:
             short_setup = self.exit_rule.evaluate(bar.symbol, state.history)
             await self._step(state, state.short, bar, short_setup)
 
+    @staticmethod
+    def _reset_machines(state: _SymbolState) -> None:
+        for machine in state.machines():
+            machine.reset()
+
     async def _step(
-        self, state: _SymbolState, m: _DirectionMachine, bar: Bar, setup: Alert | None
+        self,
+        state: _SymbolState,
+        machine: _DirectionMachine,
+        bar: Bar,
+        setup: Alert | None,
     ) -> None:
         signal = setup is not None
-        if m.phase is Phase.WAITING:
+        if machine.phase is Phase.WAITING:
             if signal:
-                await self._arm(m, bar, setup)
-        elif m.phase is Phase.ARMED:
-            await self._advance_armed(state, m, bar)
-        elif m.phase is Phase.COOLDOWN:
-            self._advance_cooldown(m, signal)
+                await self._arm(machine, bar, setup)
+        elif machine.phase is Phase.ARMED:
+            await self._advance_armed(state, machine, bar)
+        elif machine.phase is Phase.COOLDOWN:
+            self._advance_cooldown(machine, signal)
 
-    async def _arm(self, m: _DirectionMachine, bar: Bar, setup: Alert) -> None:
+    async def _arm(self, machine: _DirectionMachine, bar: Bar, setup: Alert) -> None:
         """WAITING -> ARMED: fire a WATCH alert and start the two-close
         hunt. The arming bar itself does NOT count toward the confirmation."""
-        setup.kind = m.watch_kind
+        setup.kind = machine.watch_kind
         self._enrich(setup, bar.symbol)
         await self.notifier.send(setup)
-        m.phase = Phase.ARMED
-        m.consecutive = 0
-        m.bars_since_arm = 0
+        machine.phase = Phase.ARMED
+        machine.consecutive = 0
+        machine.bars_since_arm = 0
 
     async def _advance_armed(
-        self, state: _SymbolState, m: _DirectionMachine, bar: Bar
+        self, state: _SymbolState, machine: _DirectionMachine, bar: Bar
     ) -> None:
-        m.bars_since_arm += 1
-        if m.is_confirm_close(bar):
-            m.consecutive += 1
+        machine.bars_since_arm += 1
+        if machine.is_confirm_close(bar):
+            machine.consecutive += 1
         else:  # a non-confirming close breaks the streak (must be *consecutive*)
-            m.consecutive = 0
+            machine.consecutive = 0
         # Success beats timeout: check the confirmation before the clock.
-        if m.consecutive >= m.confirm_bars:
-            await self._fire(m, bar)
-        elif m.bars_since_arm >= m.arm_timeout_bars:
-            self._timeout(state, m)
+        if machine.consecutive >= machine.confirm_bars:
+            await self._fire(machine, bar)
+        elif machine.bars_since_arm >= machine.arm_timeout_bars:
+            self._timeout(state, machine)
 
-    async def _fire(self, m: _DirectionMachine, bar: Bar) -> None:
+    async def _fire(self, machine: _DirectionMachine, bar: Bar) -> None:
         """ARMED -> COOLDOWN: the setup confirmed; fire BUY/SELL."""
-        if m.long:
+        if machine.long:
             message = (
-                f"BUY {bar.symbol}: {m.confirm_bars} green 2-min closes "
+                f"BUY {bar.symbol}: {machine.confirm_bars} green 2-min closes "
                 f"confirmed after oversold arm (close {bar.close:.2f})"
             )
         else:
             message = (
-                f"SELL {bar.symbol}: {m.confirm_bars} red 2-min closes "
+                f"SELL {bar.symbol}: {machine.confirm_bars} red 2-min closes "
                 f"confirmed after overbought arm (close {bar.close:.2f})"
             )
         alert = Alert(
             symbol=bar.symbol,
             timestamp=bar.timestamp,
-            rule=m.fire_rule,
+            rule=machine.fire_rule,
             message=message,
             context={"close": bar.close},
-            kind=m.fire_kind,
+            kind=machine.fire_kind,
         )
         self._enrich(alert, bar.symbol)
         await self.notifier.send(alert)
-        m.phase = Phase.COOLDOWN
-        m.bars_since_alert = 0
+        machine.phase = Phase.COOLDOWN
+        machine.bars_since_alert = 0
 
-    def _timeout(self, state: _SymbolState, m: _DirectionMachine) -> None:
+    def _timeout(self, state: _SymbolState, machine: _DirectionMachine) -> None:
         """ARMED -> WAITING: no confirmation in the window. Reset this machine.
 
         Bar history is shared across a symbol's machines, so it's only dropped
@@ -279,22 +311,20 @@ class AlertEngine:
         wired there is no peer, so history is always dropped (the original
         single-machine behavior).
         """
-        m.phase = Phase.WAITING
-        m.consecutive = 0
-        m.bars_since_arm = 0
+        machine.reset()
         if all(
-            other is m or other.phase is Phase.WAITING for other in state.machines()
+            other is machine or other.phase is Phase.WAITING
+            for other in state.machines()
         ):
             state.history.clear()
 
-    def _advance_cooldown(self, m: _DirectionMachine, signal: bool) -> None:
+    def _advance_cooldown(self, machine: _DirectionMachine, signal: bool) -> None:
         """COOLDOWN -> WAITING once the setup has cleared AND a min floor of bars
         has elapsed, so we never re-fire on the same continuous setup episode.
         """
-        m.bars_since_alert += 1
-        if not signal and m.bars_since_alert >= m.cooldown_bars:
-            m.phase = Phase.WAITING
-            m.consecutive = 0
+        machine.bars_since_alert += 1
+        if not signal and machine.bars_since_alert >= machine.cooldown_bars:
+            machine.reset()
 
     def _enrich(self, alert: Alert, symbol: str) -> None:
         """Attach the day's % change / relative volume from screening, so the
@@ -307,6 +337,12 @@ class AlertEngine:
     def status(self) -> dict:
         return {
             "watching": self.watching,
+            "alert_window": {
+                "timezone": self._alert_window.timezone.key,
+                "start": self._alert_window.start.strftime("%H:%M"),
+                "end": self._alert_window.end.strftime("%H:%M"),
+                "open": self._alert_window.contains(datetime.now(timezone.utc)),
+            },
             "symbols": {
                 sym: {
                     "bars_seen": st.bars_seen,

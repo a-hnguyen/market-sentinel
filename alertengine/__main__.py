@@ -6,8 +6,8 @@
 
 Add --prescreen (with --live/--replay) to refresh the overnight candidates by
 running the pre-screen at startup before the REPL; the survivors are then
-auto-approved into the watchlist. Without it, startup loads the last candidates
-CSV a prior run/cron wrote.
+auto-approved into the watchlist. Without it, startup loads the candidates CSV
+written by a prior manual or scheduled run.
 
 Live/replay mode reads ALPACA_API_KEY / ALPACA_SECRET_KEY (from a .env file).
 `--replay` pulls a recent trading day's real bars over REST and replays them, so

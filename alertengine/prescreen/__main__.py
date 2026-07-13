@@ -5,11 +5,11 @@
 Reads ALPACA_API_KEY / ALPACA_SECRET_KEY from .env, loads the curated watchlist,
 runs the RSI 4h/1h confluence over Alpaca historical bars, and writes survivors
 to a CSV for the morning. Runs any time (historical data), so it can be invoked
-the night before — Friday's bars stand in for Monday — or pre-market via cron.
+the night before or by the deployed pre-market schedule.
 In AWS this becomes the EventBridge-scheduled Lambda edge; the pipeline
 (run_prescreen) is identical, only the sink changes.
 
-Because a weekday cron still fires on market holidays, this skips on non-trading
+Because a weekday schedule still fires on market holidays, this skips on non-trading
 days (writing nothing, so a stale-dated CSV isn't produced). Pass --force to run
 anyway, e.g. to pre-build the night before from the prior session's bars.
 """
