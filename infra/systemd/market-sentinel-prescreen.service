@@ -12,6 +12,8 @@ Type=oneshot
 User=msuser
 WorkingDirectory=/opt/market-sentinel/app
 EnvironmentFile=/etc/market-sentinel/engine.env
+# A network/provider regression must fail the scan, never monopolize the box.
+TimeoutStartSec=5min
 ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine.prescreen
 # '+' runs as root: the service user can't restart a system unit on its own.
 ExecStartPost=+/usr/bin/systemctl restart market-sentinel.service

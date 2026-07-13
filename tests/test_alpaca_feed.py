@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from requests import Session
+from requests.exceptions import Timeout as RequestsTimeout
 
-from alertengine.feeds.alpaca_feed import AlpacaFeed
+from alertengine.feeds.alpaca_feed import AlpacaFeed, _BoundedSession
 from alertengine.models import Bar
 
 
@@ -57,18 +59,28 @@ def test_construct_with_explicit_keys_does_not_connect():
 
 def test_stream_propagates_websocket_failure(monkeypatch):
     class _DeadStream:
+        instances = []
+
         def __init__(self, *args, **kwargs):
-            pass
+            self.closed = False
+            self.start_attempts = 0
+            self.instances.append(self)
 
         def subscribe_bars(self, handler, *symbols):
             self.handler = handler
 
-        async def _run_forever(self):
-            await asyncio.sleep(0)
+        async def _start_ws(self):
+            self.start_attempts += 1
             raise RuntimeError("socket died")
 
-        async def stop_ws(self):
-            pass
+        async def _send_subscribe_msg(self):  # pragma: no cover
+            raise AssertionError("subscribe after failed connect")
+
+        async def _consume(self):  # pragma: no cover
+            raise AssertionError("consume after failed connect")
+
+        async def close(self):
+            self.closed = True
 
     monkeypatch.setattr("alertengine.feeds.alpaca_feed.StockDataStream", _DeadStream)
     feed = AlpacaFeed(api_key="fake", secret_key="fake")
@@ -79,6 +91,8 @@ def test_stream_propagates_websocket_failure(monkeypatch):
             await stream.__anext__()
 
     asyncio.run(drive())
+    assert _DeadStream.instances[0].start_attempts == 1
+    assert _DeadStream.instances[0].closed is True
 
 
 def test_stream_yields_final_queued_bar_before_clean_exit(monkeypatch):
@@ -91,10 +105,16 @@ def test_stream_yields_final_queued_bar_before_clean_exit(monkeypatch):
         def subscribe_bars(self, handler, *symbols):
             self.handler = handler
 
-        async def _run_forever(self):
+        async def _start_ws(self):
+            pass
+
+        async def _send_subscribe_msg(self):
+            pass
+
+        async def _consume(self):
             await self.handler(bar)
 
-        async def stop_ws(self):
+        async def close(self):
             pass
 
     monkeypatch.setattr("alertengine.feeds.alpaca_feed.StockDataStream", _OneBarStream)
@@ -133,6 +153,18 @@ class _FakeHistClient:
     def get_stock_bars(self, req):
         self.request = req
         return SimpleNamespace(data=self._data)
+
+
+def test_historical_session_applies_connect_and_read_timeout(monkeypatch):
+    observed = {}
+
+    def fake_request(self, method, url, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(Session, "request", fake_request)
+    _BoundedSession().request("GET", "https://example.test")
+    assert observed["timeout"] == (5, 45)
 
 
 def test_backfill_bars_maps_and_sorts_chronologically():
@@ -176,3 +208,49 @@ def test_fetch_closes_returns_close_series_per_symbol():
     req = feed._hist.request
     assert req.timeframe.amount_value == 4
     assert set(req.symbol_or_symbols) == {"AAPL", "MSFT", "NONE"}
+
+
+def test_fetch_closes_batches_large_symbol_sets():
+    class _BatchHistClient:
+        def __init__(self):
+            self.requests = []
+
+        def get_stock_bars(self, req):
+            self.requests.append(req)
+            return SimpleNamespace(
+                data={
+                    symbol: [_abar(symbol, 0, 1.0)] for symbol in req.symbol_or_symbols
+                }
+            )
+
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+    feed._hist = _BatchHistClient()
+    symbols = [f"S{index:02d}" for index in range(45)]
+
+    closes = feed.fetch_closes(symbols, hours=1, lookback_days=30)
+
+    assert len(closes) == 45
+    assert [len(req.symbol_or_symbols) for req in feed._hist.requests] == [20, 20, 5]
+
+
+def test_historical_request_retries_one_timeout(monkeypatch):
+    class _FlakyHistClient:
+        def __init__(self):
+            self.calls = 0
+
+        def get_stock_bars(self, req):
+            self.calls += 1
+            if self.calls == 1:
+                raise RequestsTimeout("slow page")
+            return SimpleNamespace(data={})
+
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+    feed._hist = _FlakyHistClient()
+    monkeypatch.setattr(
+        "alertengine.feeds.alpaca_feed.time.sleep", lambda seconds: None
+    )
+
+    result = feed.fetch_closes(["AAPL"], hours=1, lookback_days=30)
+
+    assert result == {"AAPL": []}
+    assert feed._hist.calls == 2

@@ -9,7 +9,6 @@ in-memory set that the already-open Alpaca websocket never sees.
 import asyncio
 import logging
 import re
-from contextlib import suppress
 from pathlib import Path
 
 from . import settings
@@ -129,9 +128,14 @@ class WatchController:
     async def _cancel_task(self) -> None:
         if self._task is None:
             return
-        self._task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._task
+        task = self._task
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            self._log.error("watch task did not stop within 10 seconds")
         self._task = None
         self._active_symbols = ()
 
