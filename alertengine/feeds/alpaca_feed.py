@@ -128,11 +128,44 @@ class AlpacaFeed(DataFeed):
 
         stream.subscribe_bars(handler, *[s.upper() for s in symbols])
         run_task = asyncio.create_task(stream._run_forever())
+        get_task: asyncio.Task | None = None
         try:
             while True:
-                abar = await queue.get()
-                yield self._to_bar(abar)
+                get_task = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    (get_task, run_task), return_when=asyncio.FIRST_COMPLETED
+                )
+                if get_task in done:
+                    # Preserve a final queued bar even if the websocket runner
+                    # finishes in the same event-loop turn. Its exit is handled
+                    # on the next iteration.
+                    abar = get_task.result()
+                    get_task = None
+                    yield self._to_bar(abar)
+                    continue
+
+                if run_task in done:
+                    # Without this branch a dead Alpaca websocket leaves the
+                    # consumer blocked on queue.get() forever. Let the
+                    # WatchController supervisor log/retry the stream instead.
+                    get_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await get_task
+                    get_task = None
+                    if run_task.cancelled():
+                        raise RuntimeError("Alpaca websocket task stopped unexpectedly")
+                    error = run_task.exception()
+                    if error is not None:
+                        raise error
+                    return
         finally:
-            run_task.cancel()
+            if get_task is not None and not get_task.done():
+                get_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await get_task
             with suppress(Exception):
                 await stream.stop_ws()
+            if not run_task.done():
+                run_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await run_task

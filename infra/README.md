@@ -21,13 +21,13 @@ infra/
     main.tf             # provider, default-VPC data, common tags
     network.tf          # security group: NO inbound, egress only
     iam.tf              # least-priv instance role + profile
-    s3.tf               # private overlay bucket (strategy IP, archives)
-    ssm.tf              # SecureString param slots (values set out-of-band)
+    s3.tf               # private overlay bucket; archive prefix reserved
+    ssm.tf              # encrypted runtime config slots (set out-of-band)
     cloudwatch.tf       # engine log group  (alarm added in Phase 3)
     outputs.tf
     terraform.tfvars.example
   scripts/
-    bootstrap-state.sh  # one-time: create the state bucket + lock table
+    bootstrap-state.sh  # one-time: create state bucket (S3-native lockfile)
   # added in later phases:
   #   terraform/ec2.tf, user_data.sh.tftpl   (Phase 2)
   #   systemd/*.service                      (Phase 2)
@@ -43,7 +43,7 @@ infra/
 | **EC2** | Always-on box running the engine (persistent Alpaca websocket) | core |
 | **IAM** | Least-priv instance role; no static keys anywhere | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
-| **S3** | Private overlay (strategy IP) + candidate/alert archives | core |
+| **S3** | Private strategy overlay; lifecycle-ready archive prefix (unused today) | core |
 | **CloudWatch** | Engine logs + a single "engine down" alarm | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge** | Thin nightly trigger → on-box pre-screen via Run Command | minimal |
@@ -66,12 +66,12 @@ cd infra/scripts && ./bootstrap-state.sh      # prints the init command
 cd ../terraform
 terraform init -backend-config="bucket=..." -backend-config="region=us-east-1"
 
-# 3. Create the secret slots + overlay bucket FIRST (not the box yet). The box
+# 3. Create the runtime-config slots + overlay bucket FIRST (not the box yet). The box
 #    reads these at boot, so they must exist before it launches, or its clone
 #    fails against SET_ME placeholders.
 terraform apply -target=aws_ssm_parameter.config -target=aws_s3_bucket.overlay
 
-# 4. Set the real secrets into the SSM slots.
+# 4. Set the real secrets/IDs into the SSM slots.
 aws ssm put-parameter --name /market-sentinel/alpaca_api_key    --type SecureString --value 'PK...' --overwrite
 aws ssm put-parameter --name /market-sentinel/alpaca_secret_key --type SecureString --value '...'   --overwrite
 aws ssm put-parameter --name /market-sentinel/discord_bot_token        --type SecureString --value '...' --overwrite
@@ -106,8 +106,9 @@ Free-tier (new account, first 12 months): ~$0–3/mo. After: ~$13/mo (mostly the
 ## Safety
 
 - **No inbound ports.** Shell access is SSM Session Manager only.
-- **No static credentials.** The box uses an instance role; CI (Phase 5) uses
-  OIDC. There is no IAM user with long-lived keys.
+- **No static AWS credentials.** The box uses an instance role; CI uses OIDC.
+  There is no IAM user with long-lived AWS keys. Third-party API tokens remain
+  encrypted in Parameter Store and are scoped by the instance-role policy.
 - **Strategy IP never in git.** The overlay bucket is fully private and is how
   the real strategy reaches the box; a public `git clone` is intentionally
   incomplete.

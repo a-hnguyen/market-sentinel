@@ -26,11 +26,16 @@ class WatchController:
         self._lock = asyncio.Lock()
         self._enabled = False
         self._manual: set[str] = set()
+        self._active_symbols: tuple[str, ...] = ()
         self._log = logging.getLogger("alertengine.watch")
 
     @property
     def running(self) -> bool:
         return self._enabled and self._task is not None and not self._task.done()
+
+    @property
+    def active_symbols(self) -> list[str]:
+        return list(self._active_symbols)
 
     @staticmethod
     def normalize(symbol: str) -> str:
@@ -57,9 +62,11 @@ class WatchController:
     def _save_manual(self) -> None:
         path = Path(settings.MANUAL_WATCHLIST_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_text(
             "".join(f"{s}\n" for s in sorted(self._manual)), encoding="utf-8"
         )
+        temporary.replace(path)
 
     async def start(self) -> list[str]:
         async with self._lock:
@@ -80,21 +87,24 @@ class WatchController:
     async def watch(self, symbol: str) -> tuple[str, list[str]]:
         value = self.normalize(symbol)
         async with self._lock:
+            already_active = value in self._active_symbols
             self.engine.gate.approve(value)
             self._manual.add(value)
             self._save_manual()
             self._enabled = True
-            await self._restart_task()
+            if not (already_active and self.running):
+                await self._restart_task()
             return value, self.engine.gate.watchlist()
 
     async def unwatch(self, symbol: str) -> tuple[str, list[str]]:
         value = self.normalize(symbol)
         async with self._lock:
+            was_active = value in self._active_symbols
             self.engine.gate.remove(value)
             self._manual.discard(value)
             self._save_manual()
             remaining = self.engine.gate.watchlist()
-            if self._enabled and remaining:
+            if was_active and self._enabled and remaining:
                 await self._restart_task()
             elif not remaining:
                 self._enabled = False
@@ -106,6 +116,8 @@ class WatchController:
         async with self._lock:
             symbols = self.engine.gate.watchlist()
             if start and symbols:
+                if self.running and tuple(symbols) == self._active_symbols:
+                    return symbols
                 self._enabled = True
                 await self._restart_task()
             return symbols
@@ -121,12 +133,15 @@ class WatchController:
         with suppress(asyncio.CancelledError):
             await self._task
         self._task = None
+        self._active_symbols = ()
 
     async def _supervise(self) -> None:
         while self._enabled:
             symbols = self.engine.gate.watchlist()
             if not symbols:
+                self._active_symbols = ()
                 return
+            self._active_symbols = tuple(symbols)
             try:
                 await self.engine.watch(symbols)
             except asyncio.CancelledError:

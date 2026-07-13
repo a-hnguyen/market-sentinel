@@ -21,6 +21,7 @@ import os
 from . import settings
 from .engine import AlertEngine
 from .prescreen.sinks import load_candidates
+from .watch_controller import WatchController
 
 HELP = __doc__.split("Commands:", 1)[1]
 
@@ -28,28 +29,28 @@ MOST_ACTIVE_URL = "https://finance.yahoo.com/markets/stocks/most-active/"
 
 
 async def _ainput(prompt: str) -> str:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, input, prompt)
 
 
-def _approve_from_file(engine: AlertEngine, path: str) -> None:
+def _approve_from_file(engine: AlertEngine, path: str) -> list[str]:
     """Approve the pre-screen's survivors from a candidates CSV into the gate."""
     try:
         symbols = load_candidates(path)
     except FileNotFoundError:
         print(f"no candidates file at {path!r}; run 'python -m alertengine.prescreen'")
-        return
+        return []
     if not symbols:
         print(f"{path!r} has no tickers")
-        return
+        return []
     engine.gate.approve(*symbols)
     print(f"approved {len(symbols)} from {path!r}: {', '.join(symbols)}")
+    return symbols
 
 
 async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
     print("Trading alert engine. Type 'help' for commands.")
-    watch_task: asyncio.Task | None = None
-    last_candidates: list = []
+    controller = WatchController(engine)
 
     # Auto-approve the overnight pre-screen's survivors on startup, if present,
     # so the watchlist is pre-seeded without any manual 'approve' typing. Only in
@@ -75,18 +76,18 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
             print(HELP.strip("\n"))
 
         elif cmd == "screen":
-            last_candidates = await engine.screen()
+            candidates = await engine.screen()
             # In replay mode, note the historical date range the bars come from.
             window = getattr(engine.feed, "describe_window", None)
             if window:
                 print(window())
-            if not last_candidates:
+            if not candidates:
                 print("no candidates")
             else:
                 # Bare URLs are ⌘-clickable in every Mac terminal (unlike OSC 8
                 # hyperlinks, which Terminal.app ignores). Quote page per row.
                 print(f"Yahoo most active: {MOST_ACTIVE_URL}\n")
-            for i, c in enumerate(last_candidates, 1):
+            for i, c in enumerate(candidates, 1):
                 url = f"https://finance.yahoo.com/quote/{c.symbol}"
                 # Right-align the numeric fields to fixed widths so every column
                 # (and the trailing URL) lines up regardless of value magnitude.
@@ -101,6 +102,8 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
                 print("usage: approve <symbols...>")
             else:
                 engine.gate.approve(*args)
+                if controller.running:
+                    await controller.replace_from_gate(start=True)
                 print("watchlist:", ", ".join(engine.gate.watchlist()) or "(empty)")
 
         elif cmd == "prescreen":
@@ -119,34 +122,34 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
                 syms = [r.symbol for r in results]
                 if syms:
                     engine.gate.approve(*syms)
+                    if controller.running:
+                        await controller.replace_from_gate(start=True)
                 print(f"pre-screen approved {len(syms)}: {', '.join(syms) or '(none)'}")
 
         elif cmd == "load":
-            _approve_from_file(
+            loaded = _approve_from_file(
                 engine, args[0] if args else settings.PRESCREEN_OUTPUT_PATH
             )
+            if loaded and controller.running:
+                await controller.replace_from_gate(start=True)
 
         elif cmd == "watchlist":
             print(", ".join(engine.gate.watchlist()) or "(empty)")
 
         elif cmd == "watch":
-            if watch_task and not watch_task.done():
+            if controller.running:
                 print("already watching")
             else:
-                symbols = engine.gate.watchlist()
-                if not symbols:
+                try:
+                    symbols = await controller.start()
+                except ValueError:
                     print("nothing approved; use 'approve <symbols...>' first")
                 else:
-                    watch_task = asyncio.create_task(engine.watch(symbols))
                     print(f"watching: {', '.join(symbols)}")
 
         elif cmd == "stop":
-            if watch_task and not watch_task.done():
-                watch_task.cancel()
-                try:
-                    await watch_task
-                except asyncio.CancelledError:
-                    pass
+            if controller.running:
+                await controller.stop()
                 print("stopped")
             else:
                 print("not watching")
@@ -155,12 +158,7 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
             print(json.dumps(engine.status(), indent=4))
 
         elif cmd == "quit":
-            if watch_task and not watch_task.done():
-                watch_task.cancel()
-                try:
-                    await watch_task
-                except asyncio.CancelledError:
-                    pass
+            await controller.stop()
             print("bye")
             return
 

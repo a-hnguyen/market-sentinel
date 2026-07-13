@@ -3,7 +3,7 @@
 Shared by all three entry points so the logic lives in exactly one place:
   * `python -m alertengine.prescreen`      (standalone / cron)
   * `python -m alertengine --prescreen`    (refresh at engine startup)
-  * the REPL `prescreen` command           (refresh on demand)
+  * the REPL/Discord `prescreen` command   (refresh on demand)
 
 Raises FileNotFoundError if the watchlist is missing and RuntimeError if Alpaca
 credentials aren't set (from AlpacaFeed) — callers decide how to report those.

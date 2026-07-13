@@ -4,6 +4,7 @@ Live streaming needs real keys + market hours and is verified out-of-band; here
 we cover the credential guard and the Alpaca-bar -> Bar mapping.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -52,6 +53,60 @@ def test_construct_with_explicit_keys_does_not_connect():
     feed = AlpacaFeed(api_key="fake", secret_key="fake")
     assert feed._key == "fake"
     assert feed._secret == "fake"
+
+
+def test_stream_propagates_websocket_failure(monkeypatch):
+    class _DeadStream:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def subscribe_bars(self, handler, *symbols):
+            self.handler = handler
+
+        async def _run_forever(self):
+            await asyncio.sleep(0)
+            raise RuntimeError("socket died")
+
+        async def stop_ws(self):
+            pass
+
+    monkeypatch.setattr("alertengine.feeds.alpaca_feed.StockDataStream", _DeadStream)
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+
+    async def drive():
+        stream = feed.stream_bars(["AAPL"])
+        with pytest.raises(RuntimeError, match="socket died"):
+            await stream.__anext__()
+
+    asyncio.run(drive())
+
+
+def test_stream_yields_final_queued_bar_before_clean_exit(monkeypatch):
+    bar = _abar("AAPL", 30, 123.45)
+
+    class _OneBarStream:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def subscribe_bars(self, handler, *symbols):
+            self.handler = handler
+
+        async def _run_forever(self):
+            await self.handler(bar)
+
+        async def stop_ws(self):
+            pass
+
+    monkeypatch.setattr("alertengine.feeds.alpaca_feed.StockDataStream", _OneBarStream)
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+
+    async def drive():
+        stream = feed.stream_bars(["AAPL"])
+        assert (await stream.__anext__()).close == 123.45
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+
+    asyncio.run(drive())
 
 
 def _abar(symbol, minute, close):

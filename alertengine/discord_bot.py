@@ -6,8 +6,10 @@ command to one guild, one channel, and an explicit user allowlist.
 """
 
 import asyncio
+import io
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import timezone
 from zoneinfo import ZoneInfo
@@ -46,9 +48,13 @@ class DiscordConfig:
             )
         try:
             allowed = frozenset(int(value.strip()) for value in users.split(","))
-            return cls(token, int(guild), int(channel), allowed)
+            guild_id = int(guild)
+            channel_id = int(channel)
         except ValueError as exc:
             raise RuntimeError("Discord IDs must be numeric") from exc
+        if guild_id <= 0 or channel_id <= 0 or not allowed or min(allowed) <= 0:
+            raise RuntimeError("Discord IDs must be positive")
+        return cls(token, guild_id, channel_id, allowed)
 
 
 class DiscordBot(discord.Client, Notifier):
@@ -63,6 +69,7 @@ class DiscordBot(discord.Client, Notifier):
         self.controller = controller
         self.config = config
         self.tree = app_commands.CommandTree(self)
+        self._prescreen_task: asyncio.Task[None] | None = None
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -105,7 +112,56 @@ class DiscordBot(discord.Client, Notifier):
                 f"volx{c.volume_ratio:>4.1f}"
             )
         lines.append("```")
+        if len(candidates) > 20:
+            lines.append(f"Showing 20 of {len(candidates)} candidates.")
         return "\n".join(lines)
+
+    async def _run_prescreen_job(self, channel: discord.abc.Messageable) -> None:
+        """Run the CPU-heavy scan out of process and report back to Discord."""
+        process: asyncio.subprocess.Process | None = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "alertengine.prescreen",
+                "--force",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                output, _ = await asyncio.wait_for(
+                    process.communicate(), timeout=settings.PRESCREEN_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                await channel.send(
+                    "⏱️ Pre-screen stopped after "
+                    f"{settings.PRESCREEN_TIMEOUT_SECONDS // 60} minutes. "
+                    "The live watcher and Discord bot are still running."
+                )
+                return
+
+            text = output.decode("utf-8", errors="replace").strip()
+            if process.returncode != 0:
+                detail = text[-1500:] or f"process exited {process.returncode}"
+                await channel.send(f"❌ Pre-screen failed:\n```text\n{detail}\n```")
+                return
+
+            symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
+            if symbols:
+                self.engine.gate.approve(*symbols)
+                await self.controller.replace_from_gate(start=True)
+            await channel.send(
+                f"✅ Pre-screen found {len(symbols)}: {self._symbols(symbols)}"
+            )
+        except asyncio.CancelledError:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            raise
+        except Exception as exc:
+            await channel.send(f"❌ Pre-screen failed: {exc}")
 
     def _register_commands(self) -> None:
         @self.tree.command(name="watch", description="Add a stock and watch it now")
@@ -181,14 +237,26 @@ class DiscordBot(discord.Client, Notifier):
                 return
             status_data = self.engine.status()
             status_data["controller_running"] = self.controller.running
+            status_data["active_symbols"] = self.controller.active_symbols
             status_data["watchlist"] = self.engine.gate.watchlist()
             if stock:
-                symbol = stock.strip().upper()
+                try:
+                    symbol = self.controller.normalize(stock)
+                except ValueError as exc:
+                    await interaction.response.send_message(str(exc), ephemeral=True)
+                    return
                 status_data["symbols"] = {
                     symbol: status_data["symbols"].get(symbol, "no bars yet")
                 }
             body = json.dumps(status_data, indent=2)
-            await interaction.response.send_message(f"```json\n{body[:1850]}\n```")
+            if len(body) <= 1850:
+                await interaction.response.send_message(f"```json\n{body}\n```")
+            else:
+                payload = io.BytesIO(body.encode("utf-8"))
+                await interaction.response.send_message(
+                    "Status is attached because it exceeds Discord's message limit.",
+                    file=discord.File(payload, filename="market-sentinel-status.json"),
+                )
 
         @self.tree.command(name="screen", description="Run the live stock screener")
         async def screen(interaction: discord.Interaction) -> None:
@@ -207,22 +275,21 @@ class DiscordBot(discord.Client, Notifier):
         async def prescreen(interaction: discord.Interaction) -> None:
             if not await self._guard(interaction):
                 return
-            await interaction.response.defer(thinking=True)
-            try:
-                from .prescreen.runner import run_prescreen
-
-                results = await asyncio.to_thread(run_prescreen)
-                symbols = [r.symbol for r in results]
-                if symbols:
-                    self.engine.gate.approve(*symbols)
-                    await self.controller.replace_from_gate(start=True)
-                await interaction.followup.send(
-                    f"Pre-screen found {len(symbols)}: {self._symbols(symbols)}"
+            if self._prescreen_task is not None and not self._prescreen_task.done():
+                await interaction.response.send_message(
+                    "A pre-screen is already running. I’ll post here when it finishes.",
+                    ephemeral=True,
                 )
-            except Exception as exc:
-                await interaction.followup.send(
-                    f"Pre-screen failed: {exc}", ephemeral=True
-                )
+                return
+            channel = interaction.channel
+            if channel is None:
+                channel = await self.fetch_channel(self.config.channel_id)
+            self._prescreen_task = asyncio.create_task(
+                self._run_prescreen_job(channel), name="discord-prescreen"
+            )
+            await interaction.response.send_message(
+                "🔄 Pre-screen started in the background. I’ll post the result here."
+            )
 
         @self.tree.command(name="help", description="Show market-sentinel commands")
         async def help_command(interaction: discord.Interaction) -> None:

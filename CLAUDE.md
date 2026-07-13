@@ -1,11 +1,11 @@
 # CLAUDE.md — market-sentinel
 
 Async Python **alert engine** (not an auto-trader). It screens a stock universe
-on demand, watches human-approved symbols on 2-min bars, and fires a console
-alert when the layer-1 setup hits: **close < lower Bollinger Band AND RSI < 30**.
-A human triggers screening and approves the watchlist. **No orders are ever
-placed.** See `BUILD_SPEC.md` for the full v1 build spec (git-ignored — contains
-the private strategy IP).
+on demand, watches human-approved symbols on 2-min bars, and sends armed +
+confirmed buy/sell alerts to a private Discord channel. Discord slash commands
+are the deployed remote control; the local REPL remains for development. **No
+orders are ever placed.** See `BUILD_SPEC.md` for the full v1 build spec
+(git-ignored — contains the private strategy IP).
 
 ## Non-negotiable rules
 
@@ -18,7 +18,7 @@ the private strategy IP).
   `rules/_private/`, `settings_local.py`, `*.log`, `BUILD_SPEC.md`,
   `Trading_Bot_Context.md`, `JS_Context.md`, and `*.pdf` before any commit.
 - **yfinance is screening ONLY, never the trade/data path.** Bars come from the
-  DataFeed (mock now, Alpaca later). Keep the two sources separate.
+  DataFeed (mock/replay locally, Alpaca live). Keep the two sources separate.
 - **The four seams are load-bearing** — `Screener`, `DataFeed`, `AlertRule`,
   `Notifier` (`alertengine/interfaces.py`) plus the `ApprovalGate`. Don't merge
   or rename them to "simplify"; swapping mock→real (Alpaca/yfinance) and adding a
@@ -30,7 +30,9 @@ the private strategy IP).
 ## Architecture
 
 ```
-Screener ─▶ [ApprovalGate] ─▶ DataFeed(1-min) ─▶ aggregator(2-min)
+Discord/REPL ─▶ WatchController ─▶ [ApprovalGate] ─▶ DataFeed(1-min)
+                                                          │
+                                                   aggregator(2-min)
                                                         │
                                               indicators (BB, RSI)
                                                         │
@@ -44,6 +46,10 @@ Screener ─▶ [ApprovalGate] ─▶ DataFeed(1-min) ─▶ aggregator(2-min)
   stream, hence the aggregation.
 - `alertengine/engine.py` — owns all state: per-symbol 2-min history +
   armed/cooldown de-dup. Keeps `AlertRule` stateless.
+- `alertengine/watch_controller.py` — owns start/stop/restart of the active
+  subscription when Discord or the REPL changes the watchlist.
+- `alertengine/discord_bot.py` — allowlisted slash commands + alert delivery;
+  connects outbound, with no inbound EC2 ports.
 - `alertengine/settings.py` — **all tunables live here** (indicator params, screen
   filters, cooldown), as generic publishable placeholders. Real confirmed values
   live in git-ignored `settings_local.py`, which overrides them at import time —
@@ -61,6 +67,7 @@ source .venv/bin/activate
 pytest tests/ -q                   # run all tests (no plugins needed)
 python -m alertengine              # mock mode — synthetic bars, no API keys
 python -m alertengine --live       # live — yfinance screen + Alpaca 1-min feed
+python -m alertengine --live --headless  # production Discord control
 # REPL: screen → approve <SYMS> → watch → status → quit
 ```
 
@@ -80,13 +87,12 @@ identical.
   `requires-python = ">=3.10"`. Code stays 3.10-safe (PEP 604 `X | None`, builtin
   generics OK). Bump back if standardizing on 3.12.
 - Deps: `pandas`, `numpy`, `yfinance` (screening), `alpaca-py` (live 1-min feed),
-  `python-dotenv` (`.env` loading). Install with `pip install -e ".[dev]"` in the venv.
+  `discord.py` (remote control/alerts), `python-dotenv` (`.env` loading). Install
+  with `pip install -e ".[dev]"` in the venv.
 
 ## Status / roadmap
 
-Build Order steps 1–6 are **built and tested**. The yfinance screener is
-live-verified against Yahoo; the Alpaca live feed is code-complete and
-unit-tested (bar mapping + credential guard) but its websocket streaming needs
-real keys + market hours to exercise end-to-end. Next: step 7 (private strategy
-module, AWS deploy, dashboard) — see `Trading_Bot_Context.md` for the full
-architecture and the AWS/streaming/observability upskilling plan.
+Build Order steps 1–10 are **built and tested**. The lean AWS stack, scheduled
+pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
+Next: production market-session soak test, then the private strategy module and
+deferred dashboard tier. See `BUILD_SPEC.md` for current status.

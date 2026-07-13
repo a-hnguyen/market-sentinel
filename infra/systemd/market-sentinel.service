@@ -18,6 +18,7 @@ Type=simple
 User=msuser
 WorkingDirectory=/opt/market-sentinel/app
 EnvironmentFile=/etc/market-sentinel/engine.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine --live --headless
 Restart=always
 RestartSec=10

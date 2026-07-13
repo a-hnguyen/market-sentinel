@@ -1,5 +1,5 @@
 output "overlay_bucket" {
-  description = "Private bucket for the strategy overlay + archives."
+  description = "Private strategy-overlay bucket (archive prefix reserved)."
   value       = aws_s3_bucket.overlay.id
 }
 

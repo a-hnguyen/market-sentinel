@@ -2,7 +2,7 @@
 JS_Context.md
 Trading_Bot_Context.md
 ARCHITECTURE.md
-# BUILD_SPEC.md contains Dad's strategy IP — keep private for now
+# BUILD_SPEC.md contains private strategy IP — keep private for now
 BUILD_SPEC.md
 
 # Reference material / large binaries (keep out of git)
@@ -13,7 +13,7 @@ alertengine/rules/_private/
 alertengine/settings_local.py
 *.log
 
-# Pre-screen input (Dad's curated watchlist) and nightly output
+# Pre-screen input (private curated watchlist) and nightly output
 alertengine/data/
 *.csv
 __pycache__/

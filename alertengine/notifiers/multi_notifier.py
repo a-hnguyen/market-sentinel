@@ -4,6 +4,7 @@ Each notifier is sent to independently; one failing (or being slow) does not
 stop the others from receiving the alert.
 """
 
+import asyncio
 import logging
 
 from ..interfaces import Notifier
@@ -16,8 +17,10 @@ class MultiNotifier(Notifier):
         self._log = logging.getLogger("alertengine.notify")
 
     async def send(self, alert: Alert) -> None:
-        for n in self._notifiers:
-            try:
-                await n.send(alert)
-            except Exception as e:  # one channel failing shouldn't block the rest
-                self._log.warning("%s failed: %s", type(n).__name__, e)
+        await asyncio.gather(*(self._send_one(n, alert) for n in self._notifiers))
+
+    async def _send_one(self, notifier: Notifier, alert: Alert) -> None:
+        try:
+            await notifier.send(alert)
+        except Exception as e:  # one channel failing shouldn't block the rest
+            self._log.warning("%s failed: %s", type(notifier).__name__, e)

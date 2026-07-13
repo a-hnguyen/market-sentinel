@@ -1,7 +1,7 @@
 # The engine box. One always-on instance holds the persistent Alpaca websocket
-# and runs the engine as a systemd service; a systemd timer runs the nightly
-# pre-screen. It reaches the internet outbound only (no inbound — admin via SSM
-# Session Manager), assumes the least-priv instance role, and pulls its secrets
+# and runs the engine as a systemd service. EventBridge/Lambda starts the nightly
+# pre-screen through SSM. It reaches the internet outbound only (no inbound;
+# admin is SSM Session Manager), assumes the least-priv instance role, and pulls its secrets
 # (SSM) and private overlay (S3) itself on boot.
 
 # Latest Amazon Linux 2023 x86_64, resolved from the public SSM parameter AWS

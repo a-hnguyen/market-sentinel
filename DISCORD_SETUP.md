@@ -17,7 +17,7 @@ Content intent.
 
 ## 2. Create the channel and copy IDs
 
-Create a private text channel visible only to the bot, Dad, and the maintainer.
+Create a private text channel visible only to the bot and authorized users.
 Enable Discord **Developer Mode**, then copy:
 
 - server ID → `DISCORD_GUILD_ID`
@@ -41,9 +41,9 @@ aws ssm put-parameter --name /market-sentinel/discord_allowed_user_ids \
 
 For local testing, put the same four names in the git-ignored `.env` instead.
 
-## 4. Verify before market hours
+## 4. Verify the deployed service before market hours
 
-Run replay mode locally or deploy the service, then use the private channel:
+Deploy/start the EC2 service, then use the private channel:
 
 ```text
 /watch AAPL
@@ -52,10 +52,14 @@ Run replay mode locally or deploy the service, then use the private channel:
 /unwatch AAPL
 ```
 
-The bot should respond to each command and post buy/sell setup and confirmation
-embeds. Test an unauthorized Discord account or another channel too; it must get
-only an ephemeral denial.
+The bot should respond to each command. Send a labeled synthetic embed during
+initial setup (or verify the next real setup alert) to confirm Embed Links. Test
+an unauthorized Discord account or another channel too; it must receive only an
+ephemeral denial.
+
+Do not run a local `--headless` process with the production token while EC2 is
+online: it would create a second Gateway client for the same control bot. Local
+replay should use the normal console REPL (`python -m alertengine --replay`).
 
 Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 `/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
-

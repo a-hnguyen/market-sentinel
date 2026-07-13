@@ -1,9 +1,9 @@
-# Windows setup
+# Optional Windows development setup
 
-How to run the alert engine on a Windows desktop. Takes ~10 minutes.
+How to run the alert engine locally for development/replay. Production already
+runs on EC2 and is controlled through Discord.
 
-The engine **watches** symbols and **pushes alerts** to your phone and desktop.
-It never places orders.
+The local process prints alerts in its REPL. It never places orders.
 
 ## 1. Install Python
 
@@ -51,28 +51,27 @@ them separately. Place them exactly here:
 | `.env`                            | project root (next to `pyproject.toml`) |
 | `settings_local.py`               | `alertengine\` folder       |
 
-`.env` contains your Alpaca keys and Discord bot configuration.
-`settings_local.py` contains the screening settings. Without both, the engine
-won't connect or screen correctly.
+`.env` needs the Alpaca keys for live/replay. `settings_local.py` contains the
+private screening settings. Discord values are needed only if intentionally
+running `--headless`; do not start a second headless process while production is
+using the same bot token.
 
-## 5. Set up Discord control and alerts
+## 5. Discord is already the production control
 
-Follow `DISCORD_SETUP.md` once to create the private bot/channel and put its token
-and numeric IDs in `.env`. Only allowlisted users in that server/channel can run
-the market commands. Never share or commit the bot token.
+See `DISCORD_SETUP.md` for the EC2 configuration. Normal Windows development
+uses the local REPL and does not connect another Discord Gateway session.
 
 ## 6. Test it before you rely on it
 
-Run the engine in **replay mode**, which pulls real recent market data and works
-any time — nights, weekends, holidays. Do this **with your phone next to you**:
+Run replay mode, which pulls recent market data and works nights, weekends, and
+holidays:
 
 ```powershell
-python -m alertengine --replay --headless
+python -m alertengine --replay
 ```
 
-Use `/watch AAPL`, `/status`, and `/watchlist` in the private Discord channel.
-The bot should respond there and post alert embeds during replay. Fix bot access
-before relying on it at market open.
+Use the REPL: `approve AAPL`, `watch`, `status`, then `stop`/`quit`. Replay alerts
+are clearly isolated from the production Discord bot.
 
 ## 7. Run it live
 
@@ -82,8 +81,8 @@ During market hours (**6:30 AM–1:00 PM Pacific**, Mon–Fri):
 python -m alertengine --live
 ```
 
-Leave the window open. It streams live 1-minute bars, and pushes an alert the
-moment a watched symbol hits the setup. Press **Ctrl+C** to stop.
+Leave the window open. It streams live 1-minute bars and prints alerts locally.
+Press **Ctrl+C** to stop. Production operation should normally remain on EC2.
 
 ## Daily use
 
@@ -98,9 +97,6 @@ morning.
 
 - **`python` not recognized** — the PATH box wasn't checked in step 1.
   Reinstall Python and check it, or use `py -m alertengine ...` instead.
-- **Discord bot offline** — confirm the token and all IDs in `.env`, ensure the
-  bot is in the server, and confirm it can View Channel, Send Messages, and
-  Embed Links.
 - **Connection / auth error at startup** — `.env` is missing or the Alpaca keys
   are wrong. Check the file is in the project root, not a subfolder.
 - **Times look off** — timestamps are shown in Pacific; the `tzdata` package

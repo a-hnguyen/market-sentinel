@@ -1,6 +1,7 @@
 # Private bucket for the git-ignored layer that must NEVER live in the public
 # repo: settings_local.py, rules/_private/, data/watchlist.xls. The box pulls
-# these on boot (see user_data). Also holds nightly candidate/alert archives.
+# these on boot (see user_data). An archive/ prefix is reserved for a future
+# sink; the current engine does not upload candidates or alerts there.
 #
 # A public `git clone` is deliberately incomplete; this bucket is how the real
 # strategy reaches the box, out-of-band.
@@ -35,8 +36,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "overlay" {
   }
 }
 
-# Expire archived candidate/alert files after 90 days; the private overlay lives
-# under private/ and is left untouched by this rule.
+# Future archive objects expire after 90 days; the private overlay lives under
+# private/ and is left untouched by this rule.
 resource "aws_s3_bucket_lifecycle_configuration" "overlay" {
   bucket = aws_s3_bucket.overlay.id
   rule {

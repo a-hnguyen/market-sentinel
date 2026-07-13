@@ -51,8 +51,15 @@ def test_watch_restarts_subscription_and_persists(tmp_path, monkeypatch):
         await asyncio.sleep(0)
         await controller.watch("nvda")
         await asyncio.sleep(0)
+        await controller.watch("NVDA")  # idempotent: no needless reconnect
+        await asyncio.sleep(0)
+        assert feed.subscriptions == [["AAPL"], ["AAPL", "NVDA"]]
+        assert controller.active_symbols == ["AAPL", "NVDA"]
+        await controller.replace_from_gate(start=True)
+        await asyncio.sleep(0)
         assert feed.subscriptions == [["AAPL"], ["AAPL", "NVDA"]]
         assert (tmp_path / "watch.txt").read_text() == "AAPL\nNVDA\n"
+        assert not (tmp_path / "watch.txt.tmp").exists()
         await controller.stop()
 
     asyncio.run(drive())
@@ -71,8 +78,13 @@ def test_unwatch_restarts_or_stops(tmp_path, monkeypatch):
         await controller.unwatch("AAPL")
         await asyncio.sleep(0)
         assert feed.subscriptions[-1] == ["NVDA"]
+        subscriptions = len(feed.subscriptions)
+        await controller.unwatch("AAPL")  # idempotent: no needless reconnect
+        await asyncio.sleep(0)
+        assert len(feed.subscriptions) == subscriptions
         await controller.unwatch("NVDA")
         assert not controller.running
+        assert controller.active_symbols == []
 
     asyncio.run(drive())
 

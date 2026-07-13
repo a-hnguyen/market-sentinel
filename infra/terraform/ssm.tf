@@ -1,4 +1,4 @@
-# Secrets/config as SSM Parameter Store SecureStrings. Terraform creates the
+# Runtime secrets/config as SSM Parameter Store SecureStrings. Terraform creates
 # parameter *slots* with placeholder values and ignores drift on `value`, so the
 # real secrets are set out-of-band (CLI/console) and never live in git or state
 # as plaintext you typed. The box reads them at boot via its instance role.

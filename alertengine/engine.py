@@ -222,7 +222,7 @@ class AlertEngine:
             self._advance_cooldown(m, signal)
 
     async def _arm(self, m: _DirectionMachine, bar: Bar, setup: Alert) -> None:
-        """WAITING -> ARMED: fire a console-only WATCH and start the two-close
+        """WAITING -> ARMED: fire a WATCH alert and start the two-close
         hunt. The arming bar itself does NOT count toward the confirmation."""
         setup.kind = m.watch_kind
         self._enrich(setup, bar.symbol)
@@ -246,7 +246,7 @@ class AlertEngine:
             self._timeout(state, m)
 
     async def _fire(self, m: _DirectionMachine, bar: Bar) -> None:
-        """ARMED -> COOLDOWN: the setup confirmed. This is the phone-pushed one."""
+        """ARMED -> COOLDOWN: the setup confirmed; fire BUY/SELL."""
         if m.long:
             message = (
                 f"BUY {bar.symbol}: {m.confirm_bars} green 2-min closes "
