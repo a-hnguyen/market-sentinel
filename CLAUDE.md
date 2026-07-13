@@ -4,8 +4,8 @@ Async Python **alert engine** (not an auto-trader). It screens a stock universe
 on demand, watches human-approved symbols on 2-min bars, and sends armed +
 confirmed buy/sell alerts to a private Discord channel. Discord slash commands
 are the deployed remote control; the local REPL remains for development. **No
-orders are ever placed.** See `BUILD_SPEC.md` for the full v1 build spec
-(git-ignored — contains the private strategy IP).
+orders are ever placed.** See `ARCHITECTURE.md` for the current runtime and AWS
+design.
 
 ## Non-negotiable rules
 
@@ -15,15 +15,15 @@ orders are ever placed.** See `BUILD_SPEC.md` for the full v1 build spec
   `alertengine/rules/_private/`; real tuned params/criteria go in git-ignored
   `alertengine/settings_local.py` (which overrides `settings.py`). Hidden logic
   must be **ABSENT, not obfuscated**. `.gitignore` must keep covering `.env`,
-  `rules/_private/`, `settings_local.py`, `*.log`, `BUILD_SPEC.md`,
-  `Trading_Bot_Context.md`, `JS_Context.md`, and `*.pdf` before any commit.
+  `rules/_private/`, `settings_local.py`, secrets, logs, private notes, and
+  reference PDFs before any commit. Treat `.gitignore` as the authoritative list.
 - **yfinance is screening ONLY, never the trade/data path.** Bars come from the
   DataFeed (mock/replay locally, Alpaca live). Keep the two sources separate.
 - **The four seams are load-bearing** — `Screener`, `DataFeed`, `AlertRule`,
   `Notifier` (`alertengine/interfaces.py`) plus the `ApprovalGate`. Don't merge
   or rename them to "simplify"; swapping mock→real (Alpaca/yfinance) and adding a
   dashboard/IBKR later depends on these boundaries staying intact.
-- **Build incrementally, follow BUILD_SPEC's Build Order.** Don't one-shot the app.
+- **Build incrementally.** Don't one-shot the app.
   The aggregator is the one place a silent bug poisons everything downstream —
   its test must pass before building on top.
 
@@ -91,9 +91,9 @@ identical.
 
 ## Environment
 
-- BUILD_SPEC targets Python 3.12; the dev machine has 3.10, so `pyproject.toml` sets
-  `requires-python = ">=3.10"`. Code stays 3.10-safe (PEP 604 `X | None`, builtin
-  generics OK). Bump back if standardizing on 3.12.
+- `pyproject.toml` sets `requires-python = ">=3.10"`; local development uses
+  3.10, CI/deploy use 3.11, and the Windows guide recommends 3.12. Code stays
+  3.10-safe (PEP 604 `X | None`, builtin generics OK).
 - Deps: `pandas`, `numpy`, `yfinance` (screening), `alpaca-py` (live 1-min feed),
   `discord.py` (remote control/alerts), `python-dotenv` (`.env` loading). Install
   with `pip install -e ".[dev]"` in the venv.
@@ -102,9 +102,8 @@ identical.
 
 - `README.md` is the public entry point; `ARCHITECTURE.md` describes current
   behavior and ownership; `infra/README.md` is the production runbook.
-- `BUILD_SPEC.md` is the detailed private contract. `Trading_Bot_Context.md` and
-  `JS_Context.md` contain decision history/interview material and must label
-  superseded ideas instead of presenting them as deployed behavior.
+- Git-ignored private notes are non-authoritative and must not be referenced by
+  public-facing documentation.
 - When runtime behavior changes, update the current-state docs in the same pass.
   Verify commands, schedules, persistence, logging, and failure behavior against
   code/IaC rather than copying old plans forward.
@@ -115,4 +114,4 @@ Build Order steps 1–10 are **built and tested**. The lean AWS stack, scheduled
 pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
 Application logs currently live in journald and are inspected through SSM; do
 not claim the provisioned CloudWatch engine log group is receiving them until a
-shipping agent is actually configured. See `BUILD_SPEC.md` for current status.
+shipping agent is actually configured. See `ARCHITECTURE.md` for current status.

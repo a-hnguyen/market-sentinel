@@ -76,9 +76,6 @@ Replay still enforces the configured alert window against historical bar times.
 | [DISCORD_SETUP.md](DISCORD_SETUP.md) | Bot creation, authorization, commands, and SSM configuration |
 | [SETUP_WINDOWS.md](SETUP_WINDOWS.md) | Optional Windows local-development walkthrough |
 | [infra/README.md](infra/README.md) | Terraform deployment, schedule, operations, and logs |
-| `BUILD_SPEC.md` | Private detailed implementation contract; intentionally git-ignored |
-| `Trading_Bot_Context.md` | Private strategy rationale and decision history; intentionally git-ignored |
-| `JS_Context.md` | Private career/interview notes; intentionally git-ignored |
 | `CLAUDE.md` | Coding-agent constraints and repository conventions |
 
 ## Production boundaries

@@ -4,9 +4,8 @@
 screens stocks, watches an approved set over Alpaca market data, and sends
 Discord/console alerts when a setup arms or confirms. It never submits orders.
 
-This document describes the code and AWS deployment as they exist now. Strategy
-history and future ideas live in `Trading_Bot_Context.md`; implementation detail
-lives in `BUILD_SPEC.md`.
+This document describes the code and AWS deployment as they exist now. The
+README is the shorter entry point; this is the detailed current-state map.
 
 > Private strategy values and inputs remain outside git in
 > `alertengine/settings_local.py`, `alertengine/rules/_private/`, and
