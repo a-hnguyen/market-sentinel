@@ -43,6 +43,21 @@ class WatchController:
             raise ValueError(f"invalid stock symbol: {symbol!r}")
         return value
 
+    @classmethod
+    def partition_symbols(cls, symbols: str) -> tuple[list[str], list[str]]:
+        """Partition whitespace-separated tickers into valid and invalid lists."""
+        tokens = symbols.split()
+        if not tokens:
+            raise ValueError("enter at least one stock symbol")
+        valid: list[str] = []
+        invalid: list[str] = []
+        for token in tokens:
+            try:
+                valid.append(cls.normalize(token))
+            except ValueError:
+                invalid.append(token)
+        return list(dict.fromkeys(valid)), list(dict.fromkeys(invalid))
+
     def load_manual(self) -> list[str]:
         path = Path(settings.MANUAL_WATCHLIST_PATH)
         if not path.exists():
@@ -85,22 +100,38 @@ class WatchController:
 
     async def watch(self, symbol: str) -> tuple[str, list[str]]:
         value = self.normalize(symbol)
+        values, _invalid, watchlist = await self.watch_many(value)
+        return values[0], watchlist
+
+    async def watch_many(self, symbols: str) -> tuple[list[str], list[str], list[str]]:
+        values, invalid = self.partition_symbols(symbols)
+        if not values:
+            return values, invalid, self.engine.gate.watchlist()
         async with self._lock:
-            already_active = value in self._active_symbols
-            self.engine.gate.approve(value)
-            self._manual.add(value)
+            already_active = all(value in self._active_symbols for value in values)
+            self.engine.gate.approve(*values)
+            self._manual.update(values)
             self._save_manual()
             self._enabled = True
             if not (already_active and self.running):
                 await self._restart_task()
-            return value, self.engine.gate.watchlist()
+            return values, invalid, self.engine.gate.watchlist()
 
     async def unwatch(self, symbol: str) -> tuple[str, list[str]]:
         value = self.normalize(symbol)
+        values, _invalid, watchlist = await self.unwatch_many(value)
+        return values[0], watchlist
+
+    async def unwatch_many(
+        self, symbols: str
+    ) -> tuple[list[str], list[str], list[str]]:
+        values, invalid = self.partition_symbols(symbols)
+        if not values:
+            return values, invalid, self.engine.gate.watchlist()
         async with self._lock:
-            was_active = value in self._active_symbols
-            self.engine.gate.remove(value)
-            self._manual.discard(value)
+            was_active = any(value in self._active_symbols for value in values)
+            self.engine.gate.remove(*values)
+            self._manual.difference_update(values)
             self._save_manual()
             remaining = self.engine.gate.watchlist()
             if was_active and self._enabled and remaining:
@@ -108,7 +139,7 @@ class WatchController:
             elif not remaining:
                 self._enabled = False
                 await self._cancel_task()
-            return value, remaining
+            return values, invalid, remaining
 
     async def replace_from_gate(self, start: bool = True) -> list[str]:
         """Apply gate changes made by a screen/load operation to the live feed."""

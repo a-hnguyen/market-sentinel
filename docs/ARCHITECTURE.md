@@ -137,11 +137,13 @@ On production startup, `run_discord()` loads persisted manual symbols, then
 loads `candidates.csv`, then starts the watcher if the union is non-empty.
 `WatchController` restarts the websocket whenever the gate changes.
 
-Only Discord `/watch` symbols are stored in
+Only symbols added through Discord `/watch` are stored in
 `alertengine/data/manual_watchlist.txt`. `ApprovalGate` itself does not track
-where a symbol came from. Consequently `/unwatch` removes that symbol from the
-current gate; a symbol still present in `candidates.csv` can return after the
-next service restart.
+where a symbol came from. Both commands accept whitespace-separated ticker
+lists, apply the valid subset once, and report invalid tokens as skipped.
+Consequently `/unwatch` removes the valid supplied symbols from the current
+gate; a symbol still present in `candidates.csv` can return after the next
+service restart.
 
 `/stop confirm:true` stops market streaming only. The Discord bot and systemd
 service remain online, the watchlist remains intact, and `/start` resumes it.

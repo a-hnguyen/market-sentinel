@@ -57,10 +57,10 @@ For local testing, put the same four names in the git-ignored `.env` instead.
 Deploy/start the EC2 service, then use the private channel:
 
 ```text
-/watch AAPL
+/watch AAPL MSFT
 /watchlist
 /status AAPL
-/unwatch AAPL
+/unwatch AAPL MSFT
 ```
 
 The bot should respond to each command. Send a labeled synthetic embed during
@@ -75,9 +75,13 @@ replay should use the normal console REPL (`python -m alertengine --replay`).
 Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 `/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
 
-- `/watch STOCK` persists the symbol and starts/restarts streaming immediately.
-- `/unwatch STOCK` removes it from the current gate and manual-symbol file. If
-  the same symbol remains in `candidates.csv`, it can return after a restart.
+- `/watch STOCKS` accepts one or more space-separated symbols, persists the
+  valid entries, reports invalid entries as skipped, and starts/restarts
+  streaming once.
+- `/unwatch STOCKS` accepts the same format and removes every supplied symbol
+  that is valid from the current gate and manual-symbol file in one update. It
+  reports invalid entries as skipped. A symbol remaining in `candidates.csv`
+  can return after a restart.
 - `/stop confirm:true` stops only market streaming; Discord stays online and
   `/start` resumes the existing watchlist.
 - `/prescreen` responds immediately, scans in a background child process, and

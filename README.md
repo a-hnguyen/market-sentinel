@@ -27,7 +27,7 @@ A separate scheduled pre-screen evaluates a curated watchlist over historical
 runs on one EC2 instance under systemd; EventBridge, Lambda, and SSM trigger the
 pre-screen without opening inbound ports.
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) next for the component-by-component
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) next for the component-by-component
 walkthrough, runtime sequences, persistence boundaries, and failure behavior.
 
 ## Run locally
@@ -72,9 +72,9 @@ Replay still enforces the configured alert window against historical bar times.
 
 | Document | Purpose |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Best starting point for current runtime and AWS architecture |
-| [DISCORD_SETUP.md](DISCORD_SETUP.md) | Bot creation, authorization, commands, and SSM configuration |
-| [SETUP_WINDOWS.md](SETUP_WINDOWS.md) | Optional Windows local-development walkthrough |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Best starting point for current runtime and AWS architecture |
+| [docs/DISCORD_SETUP.md](docs/DISCORD_SETUP.md) | Bot creation, authorization, commands, and SSM configuration |
+| [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) | Optional Windows local-development walkthrough |
 | [infra/README.md](infra/README.md) | Terraform deployment, schedule, operations, and logs |
 | `CLAUDE.md` | Coding-agent constraints and repository conventions |
 

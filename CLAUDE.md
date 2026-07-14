@@ -4,7 +4,7 @@ Async Python **alert engine** (not an auto-trader). It screens a stock universe
 on demand, watches human-approved symbols on 2-min bars, and sends armed +
 confirmed buy/sell alerts to a private Discord channel. Discord slash commands
 are the deployed remote control; the local REPL remains for development. **No
-orders are ever placed.** See `ARCHITECTURE.md` for the current runtime and AWS
+orders are ever placed.** See `docs/ARCHITECTURE.md` for the current runtime and AWS
 design.
 
 ## Non-negotiable rules
@@ -32,7 +32,7 @@ design.
 
 ## Architecture
 
-Read `ARCHITECTURE.md` first for the full current-state walkthrough. The compact
+Read `docs/ARCHITECTURE.md` first for the full current-state walkthrough. The compact
 path is:
 
 ```
@@ -103,7 +103,7 @@ identical.
 
 ## Documentation convention
 
-- `README.md` is the public entry point; `ARCHITECTURE.md` describes current
+- `README.md` is the public entry point; `docs/ARCHITECTURE.md` describes current
   behavior and ownership; `infra/README.md` is the production runbook.
 - Git-ignored private notes are non-authoritative and must not be referenced by
   public-facing documentation.
@@ -117,4 +117,4 @@ Build Order steps 1–10 are **built and tested**. The lean AWS stack, scheduled
 pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
 Application logs currently live in journald and are inspected through SSM; do
 not claim the provisioned CloudWatch engine log group is receiving them until a
-shipping agent is actually configured. See `ARCHITECTURE.md` for current status.
+shipping agent is actually configured. See `docs/ARCHITECTURE.md` for current status.

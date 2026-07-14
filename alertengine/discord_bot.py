@@ -164,35 +164,43 @@ class DiscordBot(discord.Client, Notifier):
             await channel.send(f"❌ Pre-screen failed: {exc}")
 
     def _register_commands(self) -> None:
-        @self.tree.command(name="watch", description="Add a stock and watch it now")
-        @app_commands.describe(stock="Ticker symbol, for example AAPL")
-        async def watch(interaction: discord.Interaction, stock: str) -> None:
+        @self.tree.command(name="watch", description="Add stocks and watch them now")
+        @app_commands.describe(stocks="Space-separated tickers, for example AAPL MSFT")
+        async def watch(interaction: discord.Interaction, stocks: str) -> None:
             if not await self._guard(interaction):
                 return
             await interaction.response.defer(thinking=True)
             try:
-                symbol, symbols = await self.controller.watch(stock)
+                added, invalid, symbols = await self.controller.watch_many(stocks)
             except ValueError as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
-            await interaction.followup.send(
-                f"✅ **{symbol}** added and streaming.\nWatchlist: {self._symbols(symbols)}"
-            )
+            lines = []
+            if added:
+                lines.append(f"✅ Added and streaming: **{self._symbols(added)}**")
+            if invalid:
+                lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            lines.append(f"Watchlist: {self._symbols(symbols)}")
+            await interaction.followup.send("\n".join(lines))
 
-        @self.tree.command(name="unwatch", description="Stop watching a stock")
-        @app_commands.describe(stock="Ticker symbol to remove")
-        async def unwatch(interaction: discord.Interaction, stock: str) -> None:
+        @self.tree.command(name="unwatch", description="Stop watching stocks")
+        @app_commands.describe(stocks="Space-separated tickers to remove")
+        async def unwatch(interaction: discord.Interaction, stocks: str) -> None:
             if not await self._guard(interaction):
                 return
             await interaction.response.defer(thinking=True)
             try:
-                symbol, symbols = await self.controller.unwatch(stock)
+                removed, invalid, symbols = await self.controller.unwatch_many(stocks)
             except ValueError as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
                 return
-            await interaction.followup.send(
-                f"🛑 **{symbol}** removed.\nWatchlist: {self._symbols(symbols)}"
-            )
+            lines = []
+            if removed:
+                lines.append(f"🛑 Removed: **{self._symbols(removed)}**")
+            if invalid:
+                lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            lines.append(f"Watchlist: {self._symbols(symbols)}")
+            await interaction.followup.send("\n".join(lines))
 
         @self.tree.command(name="watchlist", description="Show watched stocks")
         async def watchlist(interaction: discord.Interaction) -> None:
@@ -296,7 +304,7 @@ class DiscordBot(discord.Client, Notifier):
             if await self._guard(interaction):
                 await interaction.response.send_message(
                     "**Commands**\n"
-                    "`/watch STOCK` · `/unwatch STOCK` · `/watchlist`\n"
+                    "`/watch STOCKS` · `/unwatch STOCKS` · `/watchlist`\n"
                     "`/status [STOCK]` · `/screen` · `/prescreen`\n"
                     "`/start` · `/stop confirm:true`"
                 )

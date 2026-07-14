@@ -89,6 +89,77 @@ def test_unwatch_restarts_or_stops(tmp_path, monkeypatch):
     asyncio.run(drive())
 
 
+def test_batch_watch_and_unwatch_restart_once_and_persist(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
+
+    async def drive():
+        feed = _Feed()
+        controller = WatchController(_engine(feed))
+
+        added, invalid, watchlist = await controller.watch_many("aapl  msft AAPL")
+        await asyncio.sleep(0)
+        assert added == ["AAPL", "MSFT"]
+        assert invalid == []
+        assert watchlist == ["AAPL", "MSFT"]
+        assert feed.subscriptions == [["AAPL", "MSFT"]]
+        assert (tmp_path / "watch.txt").read_text() == "AAPL\nMSFT\n"
+
+        removed, invalid, watchlist = await controller.unwatch_many("aapl msft")
+        assert removed == ["AAPL", "MSFT"]
+        assert invalid == []
+        assert watchlist == []
+        assert not controller.running
+        assert (tmp_path / "watch.txt").read_text() == ""
+
+    asyncio.run(drive())
+
+
+def test_batch_skips_invalid_symbols_and_applies_valid_ones(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
+
+    async def drive():
+        feed = _Feed()
+        controller = WatchController(_engine(feed))
+        added, invalid, watchlist = await controller.watch_many(
+            "AAPL not/a/ticker MSFT bad$ AAPL"
+        )
+        await asyncio.sleep(0)
+
+        assert added == ["AAPL", "MSFT"]
+        assert invalid == ["not/a/ticker", "bad$"]
+        assert watchlist == ["AAPL", "MSFT"]
+        assert feed.subscriptions == [["AAPL", "MSFT"]]
+        assert (tmp_path / "watch.txt").read_text() == "AAPL\nMSFT\n"
+
+        removed, invalid, watchlist = await controller.unwatch_many(
+            "AAPL invalid/ticker MSFT"
+        )
+        assert removed == ["AAPL", "MSFT"]
+        assert invalid == ["invalid/ticker"]
+        assert watchlist == []
+        assert not controller.running
+
+    asyncio.run(drive())
+
+
+def test_all_invalid_batch_makes_no_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
+
+    async def drive():
+        feed = _Feed()
+        controller = WatchController(_engine(feed))
+        added, invalid, watchlist = await controller.watch_many("bad$ also/bad")
+
+        assert added == []
+        assert invalid == ["bad$", "also/bad"]
+        assert watchlist == []
+        assert feed.subscriptions == []
+        assert not controller.running
+        assert not (tmp_path / "watch.txt").exists()
+
+    asyncio.run(drive())
+
+
 def test_invalid_symbol_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
 

@@ -1,7 +1,7 @@
 # infra/ — AWS deploy for market-sentinel
 
 Infrastructure-as-code for the **lean single-box** deploy (Shape 1 in
-[`../ARCHITECTURE.md`](../ARCHITECTURE.md)): one always-on EC2 instance runs the
+[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)): one always-on EC2 instance runs the
 alert engine as a systemd service; the weekday pre-market screen is triggered by
 EventBridge → Lambda → SSM Run Command (no on-box timer). Everything is
 provisioned with Terraform; the box is administered through SSM Session Manager
