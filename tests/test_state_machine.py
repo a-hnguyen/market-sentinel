@@ -14,7 +14,7 @@ from typing import AsyncIterator
 
 from alertengine.engine import AlertEngine
 from alertengine.gate import ApprovalGate
-from alertengine.interfaces import AlertRule, DataFeed, Notifier
+from alertengine.interfaces import AlertRule, ConfirmationRule, DataFeed, Notifier
 from alertengine.models import Alert, Bar
 from alertengine.screeners.mock_screener import MockScreener
 
@@ -57,6 +57,16 @@ class ScriptedRule(AlertRule):
         return None
 
 
+class ScriptedConfirmationRule(ConfirmationRule):
+    def __init__(self, results):
+        self._results = iter(results)
+        self.calls = 0
+
+    def evaluate(self, symbol, bars):
+        self.calls += 1
+        return next(self._results)
+
+
 def _bar(i, green, symbol="ZZ"):
     o, c = 100.0, (101.0 if green else 99.0)
     return Bar(
@@ -93,6 +103,40 @@ def test_arm_then_two_greens_fires_buy():
     assert n.alerts[0].rule == "bb_rsi_layer1"
     assert n.alerts[1].rule == "bb_rsi_buy"
     assert e.status()["symbols"]["ZZ"]["phase"] == "cooldown"
+
+
+def test_optional_confirmation_rule_can_delay_buy_and_enrich_alert():
+    # The bar-pattern confirmation is ready at bar2, but the optional strategy
+    # gate blocks once. A third consecutive green bar rechecks and then fires.
+    n = _Rec()
+    confirmation = ScriptedConfirmationRule([None, {"confirmation_metric": 1.25}])
+    e = _engine(ScriptedRule(hot={0}), n, buy_confirmation_rule=confirmation)
+
+    asyncio.run(_feed(e, [_bar(0, False), _bar(1, True), _bar(2, True), _bar(3, True)]))
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert confirmation.calls == 2
+    assert n.alerts[-1].timestamp == BASE + timedelta(minutes=6)
+    assert n.alerts[-1].context["confirmation_metric"] == 1.25
+
+
+def test_confirmation_rule_cannot_extend_the_arm_timeout():
+    n = _Rec()
+    confirmation = ScriptedConfirmationRule([None, None])
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        buy_confirmation_rule=confirmation,
+        arm_timeout_bars=3,
+    )
+
+    asyncio.run(_feed(e, [_bar(0, False), _bar(1, True), _bar(2, True), _bar(3, True)]))
+
+    assert _kinds(n) == ["watch"]
+    assert confirmation.calls == 2
+    status = e.status()["symbols"]["ZZ"]
+    assert status["phase"] == "waiting"
+    assert status["history"] == 0
 
 
 def test_red_breaks_the_green_streak():

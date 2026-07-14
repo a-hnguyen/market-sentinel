@@ -85,7 +85,7 @@ kind of state or decision.
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `AlertEngine` | per-symbol bar history, buy/sell confirmation machines, rule evaluation | websocket retries, approved-symbol persistence |
+| `AlertEngine` | per-symbol bar history, buy/sell confirmation machines, rule evaluation, optional post-pattern confirmation rule | websocket retries, approved-symbol persistence |
 | `AlertWindow` | `HH:MM` parsing, Pacific/DST conversion, normal and overnight window checks | market data filtering |
 | `WatchController` | the long-running watch task, reconnect supervision, dynamic subscriptions, manual-symbol persistence | indicator/rule state |
 | `ApprovalGate` | current in-memory approved-symbol set | provenance or durable storage |
@@ -114,8 +114,10 @@ This separation is deliberate. For example, a websocket failure escapes
    history.
 6. A setup alert arms its direction-specific state machine. The arming bar does
    not count toward confirmation.
-7. Two consecutive green closes confirm BUY; two consecutive red closes confirm
-   SELL. A timeout resets an unconfirmed machine. A cooldown suppresses repeats.
+7. Two consecutive green closes confirm the public BUY pattern; two consecutive
+   red closes confirm SELL. An optional `ConfirmationRule` may apply additional
+   private checks before BUY fires. A timeout still bounds the armed state, and
+   a cooldown suppresses repeats.
 8. `MultiNotifier` sends the alert to the console/log and Discord.
 
 REST backfill runs before a live subscription and seeds history without
@@ -164,7 +166,8 @@ and Discord background job are capped at five minutes.
 
 ## The swappable seams
 
-`alertengine/interfaces.py` defines the four adapter boundaries:
+`alertengine/interfaces.py` defines four adapter boundaries plus one optional
+strategy-confirmation extension:
 
 ```python
 class Screener:
@@ -176,13 +179,18 @@ class DataFeed:
 class AlertRule:
     def evaluate(self, symbol: str, bars: list[Bar]) -> Alert | None: ...
 
+class ConfirmationRule:
+    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None: ...
+
 class Notifier:
     async def send(self, alert: Alert) -> None: ...
 ```
 
-`__main__.py` is the composition root: it chooses concrete implementations and
-constructs the engine. `CandidateSink` is a fifth, batch-only seam inside
-`prescreen/sinks.py`.
+`ConfirmationRule` is absent by default, preserving the public two-green BUY
+behavior. A private settings override can inject one without putting its logic
+in tracked code. `__main__.py` is the composition root: it chooses concrete
+implementations and constructs the engine. `CandidateSink` is a separate,
+batch-only seam inside `prescreen/sinks.py`.
 
 ## Production deployment
 

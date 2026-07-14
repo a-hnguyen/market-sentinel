@@ -61,6 +61,7 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         exit_rule=BBRSIExitRule(),  # SELL side: overbought -> two red closes
         notifier=ConsoleNotifier(),
         gate=ApprovalGate(),
+        buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
     )
 
 

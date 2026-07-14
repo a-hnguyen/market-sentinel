@@ -30,6 +30,14 @@ class AlertRule(ABC):
         setup fires this bar, else None. Stateless: the engine owns history."""
 
 
+class ConfirmationRule(ABC):
+    """Optional strategy-specific gate applied after bar-pattern confirmation."""
+
+    @abstractmethod
+    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None:
+        """Return alert context when confirmation passes, otherwise None."""
+
+
 class Notifier(ABC):
     @abstractmethod
     async def send(self, alert: Alert) -> None:

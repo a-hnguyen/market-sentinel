@@ -21,7 +21,7 @@ from . import settings
 from .aggregator import BarAggregator
 from .alert_window import AlertWindow
 from .gate import ApprovalGate
-from .interfaces import AlertRule, DataFeed, Notifier, Screener
+from .interfaces import AlertRule, ConfirmationRule, DataFeed, Notifier, Screener
 from .models import Alert, Bar, Candidate
 
 
@@ -103,6 +103,7 @@ class AlertEngine:
         window_start: str = settings.WINDOW_START,
         window_end: str = settings.WINDOW_END,
         alert_timezone: str = settings.ALERT_TIMEZONE,
+        buy_confirmation_rule: ConfirmationRule | None = None,
     ) -> None:
         self.screener = screener
         self.feed = feed
@@ -115,6 +116,7 @@ class AlertEngine:
         self.confirm_red_bars = confirm_red_bars
         self.arm_timeout_bars = arm_timeout_bars
         self.max_history = max_history
+        self.buy_confirmation_rule = buy_confirmation_rule
         self._alert_window = AlertWindow.from_strings(
             window_start, window_end, alert_timezone
         )
@@ -273,16 +275,31 @@ class AlertEngine:
             machine.consecutive = 0
         # Success beats timeout: check the confirmation before the clock.
         if machine.consecutive >= machine.confirm_bars:
-            await self._fire(machine, bar)
-        elif machine.bars_since_arm >= machine.arm_timeout_bars:
+            context: dict[str, float] = {}
+            if machine.long and self.buy_confirmation_rule is not None:
+                result = self.buy_confirmation_rule.evaluate(bar.symbol, state.history)
+                if result is not None:
+                    context.update(result)
+                    await self._fire(machine, bar, context)
+                    return
+            else:
+                await self._fire(machine, bar, context)
+                return
+        if machine.bars_since_arm >= machine.arm_timeout_bars:
             self._timeout(state, machine)
 
-    async def _fire(self, machine: _DirectionMachine, bar: Bar) -> None:
+    async def _fire(
+        self,
+        machine: _DirectionMachine,
+        bar: Bar,
+        confirmation_context: dict[str, float] | None = None,
+    ) -> None:
         """ARMED -> COOLDOWN: the setup confirmed; fire BUY/SELL."""
         if machine.long:
             message = (
-                f"BUY {bar.symbol}: {machine.confirm_bars} green 2-min closes "
-                f"confirmed after oversold arm (close {bar.close:.2f})"
+                f"BUY {bar.symbol}: confirmation passed after "
+                f"{machine.consecutive} consecutive green 2-min closes "
+                f"(close {bar.close:.2f})"
             )
         else:
             message = (
@@ -294,7 +311,7 @@ class AlertEngine:
             timestamp=bar.timestamp,
             rule=machine.fire_rule,
             message=message,
-            context={"close": bar.close},
+            context={"close": bar.close, **(confirmation_context or {})},
             kind=machine.fire_kind,
         )
         self._enrich(alert, bar.symbol)
