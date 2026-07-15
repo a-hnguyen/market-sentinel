@@ -50,12 +50,12 @@ COOLDOWN_BARS = 5
 # Stage-2 confirmation (two-stage state machine):
 #   layer-1 setup only *arms* a symbol; a BUY fires on CONFIRM_GREEN_BARS
 #   consecutive green 2-min closes. If it doesn't confirm within
-#   ARM_TIMEOUT_BARS 2-min bars (10 = 20 min), the symbol resets to scratch.
+#   ARM_TIMEOUT_BARS 2-min bars (15 = 30 min), the symbol resets to scratch.
 CONFIRM_GREEN_BARS = 2
 # Exit mirror: an overbought setup arms the SELL side; a SELL fires on
 # CONFIRM_RED_BARS consecutive red 2-min closes (same arm-timeout/cooldown).
 CONFIRM_RED_BARS = 2
-ARM_TIMEOUT_BARS = 10
+ARM_TIMEOUT_BARS = 15
 
 # Local overrides (git-ignored): real confirmed params, applied last so they win.
 try:
