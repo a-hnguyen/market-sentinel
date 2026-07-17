@@ -192,22 +192,37 @@ class AlertEngine:
         # partial bucket is intentionally dropped — live bars supply the freshest
         # data, so only fully-formed 2-min bars seed the warm-up window.
         warm_agg = BarAggregator()
-        seeded: dict[str, int] = {}
+        completed_by_symbol: dict[str, list[Bar]] = {}
         for one_min in one_min_bars:
             completed = warm_agg.add(one_min)
             if completed is not None:
-                self._seed_bar(completed, seeded)
+                completed_by_symbol.setdefault(completed.symbol, []).append(completed)
+        seeded: dict[str, int] = {}
+        for symbol, completed_bars in completed_by_symbol.items():
+            self._merge_seed_history(symbol, completed_bars)
+            seeded[symbol] = len(completed_bars)
         if seeded:
             total = sum(seeded.values())
             detail = ", ".join(f"{s}:{n}" for s, n in sorted(seeded.items()))
             print(f"backfill: seeded {total} 2-min bars for warm-up ({detail})")
 
-    def _seed_bar(self, bar: Bar, seeded: dict[str, int]) -> None:
-        state = self._states.setdefault(bar.symbol, self._new_state())
-        state.history.append(bar)
-        if len(state.history) > self.max_history:
-            del state.history[: -self.max_history]
-        seeded[bar.symbol] = seeded.get(bar.symbol, 0) + 1
+    def _merge_seed_history(self, symbol: str, bars: list[Bar]) -> None:
+        """Merge warm-up bars without duplicating or time-reversing history.
+
+        Remote watchlist changes restart the Alpaca subscription and therefore
+        run backfill again. Retained symbols already have history, so blindly
+        appending the overlapping response would repeat old bars after newer
+        ones and corrupt every rolling indicator. A completed 2-min bar is
+        uniquely identified by its clock-aligned timestamp; newer backfill data
+        replaces an existing copy, then the combined series is sorted and
+        bounded. Direction-machine state is intentionally left untouched.
+        """
+        state = self._states.setdefault(symbol, self._new_state())
+        by_timestamp = {bar.timestamp: bar for bar in state.history}
+        by_timestamp.update({bar.timestamp: bar for bar in bars})
+        state.history = sorted(by_timestamp.values(), key=lambda bar: bar.timestamp)[
+            -self.max_history :
+        ]
 
     async def _on_2min_bar(self, bar: Bar) -> None:
         state = self._states.setdefault(bar.symbol, self._new_state())

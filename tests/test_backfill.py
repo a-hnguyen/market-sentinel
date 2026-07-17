@@ -116,6 +116,28 @@ def test_backfill_seeds_history_without_firing():
     assert notifier.alerts == []  # warm-up is silent
 
 
+def test_repeated_backfill_deduplicates_and_keeps_history_chronological():
+    """Watchlist changes restart the stream and request overlapping history.
+
+    Retained symbols must not accumulate a second copy of the same bars or put
+    older backfill after newer live data; either would corrupt rolling signals.
+    """
+    seed = _minute_bars([100 - i for i in range(42)])
+    live = _minute_bars([57], start_bucket=42)
+    notifier = _RecordingNotifier()
+    feed = WarmFeed(backfill_1min=seed, stream_1min=live)
+    engine = _engine(feed, notifier)
+
+    asyncio.run(engine.watch(["ZZ"]))
+    feed._stream_1min = []  # a real reconnect only streams newly arriving bars
+    asyncio.run(engine.watch(["ZZ"]))
+
+    history = engine._states["ZZ"].history
+    timestamps = [bar.timestamp for bar in history]
+    assert timestamps == sorted(timestamps)
+    assert len(timestamps) == len(set(timestamps)) == 42
+
+
 def test_no_backfill_method_is_noop():
     # A feed without backfill_bars must not error; nothing gets seeded.
     notifier = _RecordingNotifier()
