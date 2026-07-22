@@ -1,6 +1,7 @@
-"""EventBridge-scheduled trigger for the overnight pre-screen.
+"""EventBridge Scheduler trigger for the post-close pre-screen.
 
-EventBridge fires this weekday pre-market (see eventbridge.tf). Rather than run
+EventBridge Scheduler fires this weekday at 3:00 PM Pacific (see
+eventbridge.tf). Rather than run
 the screen itself (which would mean packaging pandas/yfinance/alpaca into the
 Lambda), it stays thin: it decides *whether* today is a trading day, then asks
 SSM to start the pre-screen systemd unit on the engine box. The heavy lifting

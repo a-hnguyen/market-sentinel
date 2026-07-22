@@ -15,6 +15,7 @@ alertengine/settings_local.py
 # Pre-screen input (private curated watchlist) and nightly output
 alertengine/data/
 *.csv
+prescreen_report.json
 __pycache__/
 .venv/
 

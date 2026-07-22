@@ -210,6 +210,29 @@ def test_fetch_closes_returns_close_series_per_symbol():
     assert set(req.symbol_or_symbols) == {"AAPL", "MSFT", "NONE"}
 
 
+def test_regular_session_closes_exclude_extended_hours_and_align_to_open():
+    def bar(hour, minute, close):
+        return SimpleNamespace(
+            timestamp=datetime(2026, 7, 6, hour, minute, tzinfo=timezone.utc),
+            close=close,
+        )
+
+    # July is EDT: 13:30 UTC = 09:30 ET and 20:00 UTC = 16:00 ET.
+    bars = [
+        bar(12, 0, 1),  # pre-market: excluded
+        bar(13, 30, 10),
+        bar(14, 0, 11),
+        bar(14, 30, 12),
+        bar(15, 0, 13),
+        bar(17, 30, 14),
+        bar(19, 30, 15),
+        bar(20, 0, 99),  # after-hours boundary: excluded
+    ]
+
+    assert AlpacaFeed._regular_session_closes(bars, 1) == [11, 13, 14, 15]
+    assert AlpacaFeed._regular_session_closes(bars, 4) == [13, 15]
+
+
 def test_fetch_closes_batches_large_symbol_sets():
     class _BatchHistClient:
         def __init__(self):

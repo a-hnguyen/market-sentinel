@@ -22,6 +22,7 @@ from .engine import AlertEngine
 from .interfaces import Notifier
 from .models import Alert, Candidate
 from .notifiers.multi_notifier import MultiNotifier
+from .prescreen.reporting import load_report
 from .prescreen.sinks import load_candidates
 from .watch_controller import WatchController
 
@@ -149,11 +150,24 @@ class DiscordBot(discord.Client, Notifier):
                 return
 
             symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
-            if symbols:
-                self.engine.gate.approve(*symbols)
-                await self.controller.replace_from_gate(start=True)
+            await self.controller.replace_automatic(symbols, start=True)
+            report = load_report(settings.PRESCREEN_REPORT_PATH)
             await channel.send(
-                f"✅ Pre-screen found {len(symbols)}: {self._symbols(symbols)}"
+                "✅ **Pre-screen complete (regular session only)**\n"
+                f"Added: {self._symbols(report['added'])}\n"
+                f"Removed: {self._symbols(report['removed'])}"
+            )
+            await channel.send(
+                f"**4-hour RSI ({len(report['slow_matches'])}):** "
+                f"{self._symbols(report['slow_matches'])}"
+            )
+            await channel.send(
+                f"**1-hour RSI ({len(report['fast_matches'])}):** "
+                f"{self._symbols(report['fast_matches'])}"
+            )
+            await channel.send(
+                f"**Final intersection ({len(report['final'])}):** "
+                f"{self._symbols(report['final'])}"
             )
         except asyncio.CancelledError:
             if process is not None and process.returncode is None:
@@ -247,6 +261,8 @@ class DiscordBot(discord.Client, Notifier):
             status_data["controller_running"] = self.controller.running
             status_data["active_symbols"] = self.controller.active_symbols
             status_data["watchlist"] = self.engine.gate.watchlist()
+            status_data["automatic_symbols"] = self.controller.automatic_symbols
+            status_data["manual_symbols"] = self.controller.manual_symbols
             if stock:
                 try:
                     symbol = self.controller.normalize(stock)
@@ -278,7 +294,8 @@ class DiscordBot(discord.Client, Notifier):
                 await interaction.followup.send(f"Screen failed: {exc}", ephemeral=True)
 
         @self.tree.command(
-            name="prescreen", description="Run overnight pre-screen and watch survivors"
+            name="prescreen",
+            description="Run post-close pre-screen and replace automatic candidates",
         )
         async def prescreen(interaction: discord.Interaction) -> None:
             if not await self._guard(interaction):
@@ -357,8 +374,7 @@ async def run_discord(engine: AlertEngine, auto_approve: bool = True) -> None:
     controller.load_manual()
     if auto_approve and os.path.exists(settings.PRESCREEN_OUTPUT_PATH):
         symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
-        if symbols:
-            engine.gate.approve(*symbols)
+        controller.load_automatic(symbols)
 
     bot = DiscordBot(engine, controller, config)
     engine.notifier = MultiNotifier([engine.notifier, bot])

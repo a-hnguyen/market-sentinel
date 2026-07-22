@@ -44,8 +44,8 @@ output "prescreen_trigger_lambda" {
 }
 
 output "prescreen_schedule" {
-  description = "EventBridge cron (UTC) for the pre-screen trigger."
-  value       = aws_cloudwatch_event_rule.prescreen.schedule_expression
+  description = "EventBridge Scheduler expression for the pre-screen trigger."
+  value       = "${aws_scheduler_schedule.prescreen.schedule_expression} ${aws_scheduler_schedule.prescreen.schedule_expression_timezone}"
 }
 
 output "ci_deploy_role_arn" {

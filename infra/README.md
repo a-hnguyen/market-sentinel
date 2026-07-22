@@ -2,8 +2,9 @@
 
 Infrastructure-as-code for the **lean single-box** deploy (Shape 1 in
 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)): one always-on EC2 instance runs the
-alert engine as a systemd service; the weekday pre-market screen is triggered by
-EventBridge → Lambda → SSM Run Command (no on-box timer). Everything is
+alert engine as a systemd service; the weekday 3:00 PM Pacific post-close screen
+is triggered by EventBridge Scheduler → Lambda → SSM Run Command (no on-box
+timer). Everything is
 provisioned with Terraform; the box is administered through SSM Session Manager
 (no SSH, no open inbound ports).
 
@@ -26,7 +27,7 @@ infra/
     cloudwatch.tf       # reserved engine log group + EC2 status alarm
     sns.tf              # shared ops topic and optional email subscription
     lambda.tf           # thin pre-screen trigger
-    eventbridge.tf      # weekday 10:00 UTC schedule
+    eventbridge.tf      # timezone-aware weekday 3:00 PM Pacific schedule
     github_oidc.tf      # keyless CI deploy role
     resource_group.tf   # one tagged AWS console overview
     ec2.tf              # Amazon Linux engine box
@@ -52,7 +53,7 @@ infra/
 | **S3** | Private strategy overlay; lifecycle-ready archive prefix (unused today) | core |
 | **CloudWatch** | EC2 status alarm, Lambda logs, and a reserved engine log group | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
-| **Lambda + EventBridge** | Thin weekday pre-market trigger → on-box pre-screen via Run Command | minimal |
+| **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |
 | **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | free |
 | **Resource Groups** | One console view of every `Project`-tagged resource | free |
 
@@ -109,11 +110,13 @@ eval "$(terraform output -raw ssm_session_command)"
 
 ## Scheduled pre-screen
 
-EventBridge uses `cron(0 10 ? * MON-FRI *)`: 10:00 UTC, which is 02:00 PST or
-03:00 PDT. Lambda skips its configured market-holiday dates and sends an SSM Run
-Command targeting the EC2 `Project=market-sentinel` tag. The on-box command
-checks Alpaca's calendar again, runs `market-sentinel-prescreen.service`, writes
-`candidates.csv`, and restarts the engine so the new candidates are loaded.
+EventBridge Scheduler uses `cron(0 15 ? * MON-FRI *)` in
+`America/Los_Angeles`, remaining at 3:00 PM across PST/PDT changes. Lambda skips
+its configured market-holiday dates and sends an SSM Run Command targeting the
+EC2 `Project=market-sentinel` tag. The on-box command checks Alpaca's calendar
+again, runs `market-sentinel-prescreen.service`, writes `candidates.csv`, sends
+both RSI lists, their intersection, additions, and removals to Discord, then
+restarts the engine so the new automatic candidates are loaded.
 
 Inspect or trigger it manually:
 

@@ -11,7 +11,7 @@ RSI-only.
 without a feed; `PreScreener.run` orchestrates the batched historical fetches.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .. import settings
@@ -25,6 +25,17 @@ class ScreenResult:
     rsi_fast: float  # RSI on the fast timeframe (e.g. 1h)
     category: str  # the watchlist "List" label this ticker came from
     scanned_at: datetime
+
+
+@dataclass
+class PreScreenReport:
+    """Observable output of both RSI legs and their final intersection."""
+
+    slow_matches: list[str]
+    fast_matches: list[str]
+    results: list[ScreenResult]
+    added: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
 
 
 def evaluate_confluence(
@@ -63,18 +74,30 @@ class PreScreener:
         self.rsi_period = rsi_period
         self.rsi_threshold = rsi_threshold
 
-    def run(self, watchlist: list[tuple[str, str]]) -> list[ScreenResult]:
-        """Scan the watchlist, return survivors most-oversold first."""
+    def run_report(self, watchlist: list[tuple[str, str]]) -> PreScreenReport:
+        """Scan once and expose each RSI leg plus their intersection."""
         symbols = [sym for sym, _ in watchlist]
         category = {sym: cat for sym, cat in watchlist}
         if not symbols:
-            return []
+            return PreScreenReport([], [], [])
 
-        slow = self.feed.fetch_closes(symbols, self.slow_hours, self.slow_lookback_days)
-        fast = self.feed.fetch_closes(symbols, self.fast_hours, self.fast_lookback_days)
+        slow = self.feed.fetch_closes(
+            symbols,
+            self.slow_hours,
+            self.slow_lookback_days,
+            regular_session=True,
+        )
+        fast = self.feed.fetch_closes(
+            symbols,
+            self.fast_hours,
+            self.fast_lookback_days,
+            regular_session=True,
+        )
         now = datetime.now(timezone.utc)
 
         results: list[ScreenResult] = []
+        slow_matches: list[str] = []
+        fast_matches: list[str] = []
         for sym in symbols:
             verdict = evaluate_confluence(
                 slow.get(sym, []),
@@ -85,6 +108,10 @@ class PreScreener:
             if verdict is None:
                 continue  # not enough history on one side; skip quietly
             oversold, r_slow, r_fast = verdict
+            if r_slow < self.rsi_threshold:
+                slow_matches.append(sym)
+            if r_fast < self.rsi_threshold:
+                fast_matches.append(sym)
             if oversold:
                 results.append(
                     ScreenResult(sym, r_slow, r_fast, category.get(sym, ""), now)
@@ -92,4 +119,8 @@ class PreScreener:
 
         # Most oversold first (lowest combined RSI at the top of the sheet).
         results.sort(key=lambda r: r.rsi_slow + r.rsi_fast)
-        return results
+        return PreScreenReport(slow_matches, fast_matches, results)
+
+    def run(self, watchlist: list[tuple[str, str]]) -> list[ScreenResult]:
+        """Compatibility wrapper returning only the final intersection."""
+        return self.run_report(watchlist).results

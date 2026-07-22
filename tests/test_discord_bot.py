@@ -82,10 +82,10 @@ def test_prescreen_job_runs_in_subprocess_and_reports_results(monkeypatch):
 
     class FakeController:
         def __init__(self):
-            self.replaced = False
+            self.replaced = None
 
-        async def replace_from_gate(self, start):
-            self.replaced = start
+        async def replace_automatic(self, symbols, start):
+            self.replaced = (symbols, start)
 
     gate = FakeGate()
     controller = FakeController()
@@ -97,12 +97,24 @@ def test_prescreen_job_runs_in_subprocess_and_reports_results(monkeypatch):
     monkeypatch.setattr(
         "alertengine.discord_bot.load_candidates", lambda path: ["AAPL", "MSFT"]
     )
+    monkeypatch.setattr(
+        "alertengine.discord_bot.load_report",
+        lambda path: {
+            "slow_matches": ["AAPL", "MSFT"],
+            "fast_matches": ["AAPL"],
+            "final": ["AAPL", "MSFT"],
+            "added": ["MSFT"],
+            "removed": ["TSLA"],
+        },
+    )
 
     asyncio.run(bot._run_prescreen_job(FakeChannel()))
 
-    assert gate.approved == ["AAPL", "MSFT"]
-    assert controller.replaced is True
-    assert messages == ["✅ Pre-screen found 2: AAPL, MSFT"]
+    assert gate.approved == []
+    assert controller.replaced == (["AAPL", "MSFT"], True)
+    assert "Removed: TSLA" in messages[0]
+    assert "4-hour RSI (2):** AAPL, MSFT" in messages[1]
+    assert "Final intersection (2):** AAPL, MSFT" in messages[3]
 
 
 def test_prescreen_job_kills_timed_out_process(monkeypatch):

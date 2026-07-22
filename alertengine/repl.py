@@ -4,7 +4,7 @@ background task while the user types commands.
 Commands:
   screen                 run the screener, print numbered candidates
   approve <syms...>      add symbols to the approved watchlist
-  prescreen              re-run the overnight pre-screen now, approve survivors
+  prescreen              re-run the post-close pre-screen and replace candidates
   load [path]            approve tickers from the pre-screen's candidates CSV
   watchlist              show approved symbols
   watch                  start the 2-min watch loop (background)
@@ -52,12 +52,17 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
     print("Trading alert engine. Type 'help' for commands.")
     controller = WatchController(engine)
 
-    # Auto-approve the overnight pre-screen's survivors on startup, if present,
+    # Auto-approve the post-close pre-screen's survivors on startup, if present,
     # so the watchlist is pre-seeded without any manual 'approve' typing. Only in
     # real-data modes (--live/--replay); mock mode stays a clean sandbox instead
     # of silently seeding real tickers from a leftover candidates CSV.
     if auto_approve and os.path.exists(settings.PRESCREEN_OUTPUT_PATH):
-        _approve_from_file(engine, settings.PRESCREEN_OUTPUT_PATH)
+        symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
+        controller.load_automatic(symbols)
+        print(
+            f"approved {len(symbols)} from {settings.PRESCREEN_OUTPUT_PATH!r}: "
+            f"{', '.join(symbols)}"
+        )
         print()
 
     while True:
@@ -120,10 +125,7 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
                 print(f"pre-screen needs Alpaca credentials: {e}")
             else:
                 syms = [r.symbol for r in results]
-                if syms:
-                    engine.gate.approve(*syms)
-                    if controller.running:
-                        await controller.replace_from_gate(start=True)
+                await controller.replace_automatic(syms, start=controller.running)
                 print(f"pre-screen approved {len(syms)}: {', '.join(syms) or '(none)'}")
 
         elif cmd == "load":

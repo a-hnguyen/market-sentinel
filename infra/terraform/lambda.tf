@@ -1,4 +1,4 @@
-# Thin pre-screen trigger Lambda: EventBridge invokes it weekday pre-market, and
+# Thin pre-screen trigger Lambda: EventBridge Scheduler invokes it post-close, and
 # it asks SSM to start the pre-screen unit on the box (eventbridge.tf wires the
 # schedule). Pure-Python + boto3 (in the runtime), so no layer/deps — Terraform
 # zips the single handler file directly.

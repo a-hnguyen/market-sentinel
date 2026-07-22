@@ -19,6 +19,7 @@ import time
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
+from zoneinfo import ZoneInfo
 
 from alpaca.data.enums import DataFeed as AlpacaDataFeed
 from alpaca.data.historical import StockHistoricalDataClient
@@ -37,6 +38,7 @@ _HISTORICAL_CONNECT_TIMEOUT = 5
 _HISTORICAL_READ_TIMEOUT = 45
 _HISTORICAL_ATTEMPTS = 2
 _STREAM_CLOSE_TIMEOUT = 5
+_EASTERN = ZoneInfo("America/New_York")
 
 
 class _BoundedSession(Session):
@@ -154,8 +156,36 @@ class AlpacaFeed(DataFeed):
         bars.sort(key=lambda b: b.timestamp)
         return bars
 
+    @staticmethod
+    def _regular_session_closes(bars, hours: int) -> list[float]:
+        """Aggregate 30-minute bars into open-aligned regular-session closes.
+
+        Filtering by the bar timestamp removes pre-market and after-hours data.
+        Bins begin at the 09:30 ET open, so 1h bars are 09:30-10:30, etc.; the
+        final bin may be shorter at the normal close or on an early-close day.
+        """
+        closes: list[float] = []
+        current_key = None
+        for bar in bars:
+            local = bar.timestamp.astimezone(_EASTERN)
+            minute_of_day = local.hour * 60 + local.minute
+            if not (9 * 60 + 30 <= minute_of_day < 16 * 60):
+                continue
+            minutes_from_open = minute_of_day - (9 * 60 + 30)
+            key = (local.date(), minutes_from_open // (hours * 60))
+            if key != current_key:
+                closes.append(float(bar.close))
+                current_key = key
+            else:
+                closes[-1] = float(bar.close)
+        return closes
+
     def fetch_closes(
-        self, symbols: list[str], hours: int, lookback_days: int
+        self,
+        symbols: list[str],
+        hours: int,
+        lookback_days: int,
+        regular_session: bool = False,
     ) -> dict[str, list[float]]:
         """Historical closes per symbol at an arbitrary hourly timeframe, oldest
         to newest. For the off-hours multi-timeframe pre-screen (RSI on 4h/1h
@@ -173,16 +203,26 @@ class AlpacaFeed(DataFeed):
                     f"({len(batch)} symbols)",
                     flush=True,
                 )
+                timeframe = (
+                    TimeFrame(30, TimeFrameUnit.Minute)
+                    if regular_session
+                    else TimeFrame(hours, TimeFrameUnit.Hour)
+                )
                 req = StockBarsRequest(
                     symbol_or_symbols=batch,
-                    timeframe=TimeFrame(hours, TimeFrameUnit.Hour),
+                    timeframe=timeframe,
                     start=start,
                     end=end,
                     feed=self._feed,
                 )
                 barset = self._request_bars(req, f"{hours}h pre-screen batch {index}")
                 for symbol in batch:
-                    closes[symbol] = [bar.close for bar in barset.data.get(symbol, [])]
+                    bars = barset.data.get(symbol, [])
+                    closes[symbol] = (
+                        self._regular_session_closes(bars, hours)
+                        if regular_session
+                        else [bar.close for bar in bars]
+                    )
         return closes
 
     async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]:

@@ -28,7 +28,7 @@ LOSER_MIN_VOLUME_RATIO = 1.0
 LOSER_MIN_PCT_LOSS = 0.0
 SCREEN_MIN_ABS_PCT_CHANGE = 0.0  # min |day % change| to list (0 = no filter)
 
-# Overnight (swing) pre-screen: RSI-only oversold confluence across two
+# Post-close (swing) pre-screen: RSI-only oversold confluence across two
 # timeframes, run off-hours over a curated watchlist. A name survives only
 # if RSI is oversold on BOTH a slow and a fast timeframe. Generic defaults here;
 # real values may override in settings_local. (No Bollinger on this path — the
@@ -40,6 +40,7 @@ PRESCREEN_FAST_LOOKBACK_DAYS = 30  # ~1 month of fast bars
 PRESCREEN_RSI_THRESHOLD = RSI_OVERSOLD  # reuse the standard oversold line
 PRESCREEN_WATCHLIST_PATH = "alertengine/data/watchlist.xls"  # git-ignored input
 PRESCREEN_OUTPUT_PATH = "candidates.csv"  # scheduled survivors (git-ignored *.csv)
+PRESCREEN_REPORT_PATH = "prescreen_report.json"  # audit summary for Discord
 PRESCREEN_TIMEOUT_SECONDS = 300  # keep an Alpaca/API stall from wedging the bot
 MANUAL_WATCHLIST_PATH = "alertengine/data/manual_watchlist.txt"
 

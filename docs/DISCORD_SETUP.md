@@ -85,6 +85,9 @@ Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 - `/stop confirm:true` stops only market streaming; Discord stays online and
   `/start` resumes the existing watchlist.
 - `/prescreen` responds immediately, scans in a background child process, and
-  posts the result later. A second request is rejected while one is running.
+  posts the regular-session 4-hour list, 1-hour list, final intersection, and
+  automatic additions/removals later. A second request is rejected while one
+  is running.
 - `/status` includes watcher state, per-symbol state, and whether the configured
-  Pacific alert window is currently open.
+  Pacific alert window is currently open. It also separates automatic
+  pre-screen symbols from explicit manual `/watch` symbols.

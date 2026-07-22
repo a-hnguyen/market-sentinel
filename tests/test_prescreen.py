@@ -35,8 +35,9 @@ class _FakeFeed:
         self._per_tf = per_tf or {}  # {(sym, hours): [closes]} overrides
         self.calls = []
 
-    def fetch_closes(self, symbols, hours, lookback_days):
+    def fetch_closes(self, symbols, hours, lookback_days, regular_session=False):
         self.calls.append(hours)
+        assert regular_session is True
         out = {}
         for s in symbols:
             key = (s.upper(), hours)
@@ -93,6 +94,25 @@ def test_run_keeps_only_dual_oversold_and_fetches_both_timeframes():
     assert results[0].category == "cat-a"
     # Both timeframes were queried (4h and 1h), one batched call each.
     assert sorted(feed.calls) == [1, 4]
+
+
+def test_report_exposes_each_timeframe_and_intersection():
+    feed = _FakeFeed(
+        {},
+        per_tf={
+            ("BOTH", 4): FALLING,
+            ("BOTH", 1): FALLING,
+            ("SLOW", 4): FALLING,
+            ("SLOW", 1): RISING,
+            ("FAST", 4): RISING,
+            ("FAST", 1): FALLING,
+        },
+    )
+    report = PreScreener(feed).run_report([("BOTH", ""), ("SLOW", ""), ("FAST", "")])
+
+    assert report.slow_matches == ["BOTH", "SLOW"]
+    assert report.fast_matches == ["BOTH", "FAST"]
+    assert [result.symbol for result in report.results] == ["BOTH"]
 
 
 def test_run_sorts_most_oversold_first():
@@ -294,6 +314,9 @@ def test_run_prescreen_writes_csv_and_returns_survivors(tmp_path, monkeypatch):
     out = tmp_path / "candidates.csv"
     monkeypatch.setattr(runner.settings, "PRESCREEN_WATCHLIST_PATH", str(wl))
     monkeypatch.setattr(runner.settings, "PRESCREEN_OUTPUT_PATH", str(out))
+    monkeypatch.setattr(
+        runner.settings, "PRESCREEN_REPORT_PATH", str(tmp_path / "report.json")
+    )
 
     feed = _FakeFeed({"HOT": FALLING, "COLD": RISING})  # only HOT is oversold
     results = runner.run_prescreen(feed=feed)
@@ -301,3 +324,29 @@ def test_run_prescreen_writes_csv_and_returns_survivors(tmp_path, monkeypatch):
     assert [r.symbol for r in results] == ["HOT"]
     # The CSV was written and round-trips back to the same survivor.
     assert load_candidates(str(out)) == ["HOT"]
+
+
+def test_run_report_tracks_added_and_removed_candidates(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from alertengine.prescreen import runner
+
+    wl = tmp_path / "wl.csv"
+    _write_csv(wl, [{"Ticker": "HOT"}, {"Ticker": "OLD"}])
+    out = tmp_path / "candidates.csv"
+    report_path = tmp_path / "report.json"
+    CsvSink(str(out)).write(
+        [ScreenResult("OLD", 10, 10, "", datetime.now(timezone.utc))]
+    )
+    monkeypatch.setattr(runner.settings, "PRESCREEN_WATCHLIST_PATH", str(wl))
+    monkeypatch.setattr(runner.settings, "PRESCREEN_OUTPUT_PATH", str(out))
+    monkeypatch.setattr(runner.settings, "PRESCREEN_REPORT_PATH", str(report_path))
+
+    report = runner.run_prescreen_report(
+        feed=_FakeFeed({"HOT": FALLING, "OLD": RISING})
+    )
+
+    assert report.added == ["HOT"]
+    assert report.removed == ["OLD"]
+    assert load_candidates(str(out)) == ["HOT"]
+    assert '"removed": [\n    "OLD"' in report_path.read_text()

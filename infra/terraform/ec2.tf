@@ -1,5 +1,5 @@
 # The engine box. One always-on instance holds the persistent Alpaca websocket
-# and runs the engine as a systemd service. EventBridge/Lambda starts the scheduled
+# and runs the engine as a systemd service. EventBridge Scheduler/Lambda starts the scheduled
 # pre-screen through SSM. It reaches the internet outbound only (no inbound;
 # admin is SSM Session Manager), assumes the least-priv instance role, and pulls its secrets
 # (SSM) and private overlay (S3) itself on boot.

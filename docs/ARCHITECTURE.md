@@ -43,11 +43,11 @@ README is the shorter entry point; this is the detailed current-state map.
                 stdout + alerts.log          embeds + commands
 ```
 
-The overnight pre-screen is a separate batch flow. It writes
+The post-close pre-screen is a separate batch flow. It writes
 `candidates.csv`; it does not run inside the live websocket loop.
 
 ```text
-EventBridge (10:00 UTC weekdays)
+EventBridge Scheduler (3:00 PM America/Los_Angeles, weekdays)
              │
              ▼
 Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
@@ -55,13 +55,25 @@ Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
                          curated watchlist.xls ─────┤
                                                    ▼
                                       Alpaca historical REST
-                                      RSI on 4h and 1h bars
+                                       regular session only
                                                    │
+                              ┌────────────────────┴────────────────────┐
+                              ▼                                         ▼
+                      4-hour RSI matches                         1-hour RSI matches
+                              └────────────────────┬────────────────────┘
                                                    ▼
-                                           candidates.csv
+                                           intersection (both)
                                                    │
-                                  restart engine ──┘
+                              ┌────────────────────┴────────────────────┐
+                              ▼                                         ▼
+                       candidates.csv                         Discord audit summary
+                   replace automatic set                 legs + added/removed
+                              │
+                     restart engine
 ```
+
+Yahoo Most Actives belongs to the separate interactive `screen` path. It does
+not populate the curated spreadsheet or feed this scheduled RSI pre-screen.
 
 ## Runtime modes
 
@@ -87,8 +99,8 @@ kind of state or decision.
 |---|---|---|
 | `AlertEngine` | per-symbol bar history, buy/sell confirmation machines, rule evaluation, optional post-pattern confirmation rule | websocket retries, approved-symbol persistence |
 | `AlertWindow` | `HH:MM` parsing, Pacific/DST conversion, normal and overnight window checks | market data filtering |
-| `WatchController` | the long-running watch task, reconnect supervision, dynamic subscriptions, manual-symbol persistence | indicator/rule state |
-| `ApprovalGate` | current in-memory approved-symbol set | provenance or durable storage |
+| `WatchController` | watch task, reconnect supervision, dynamic subscriptions, automatic/manual provenance, manual persistence | indicator/rule state |
+| `ApprovalGate` | current in-memory union of approved symbols | durable storage |
 | `BarAggregator` | partial clock-aligned 2-minute buckets per symbol | historical indicator state |
 | `AlpacaFeed` | REST requests and one websocket connection attempt | retry scheduling after a failed socket |
 | `DiscordBot` | command authorization, slash commands, alert embeds, background manual pre-screen job | trading logic |
@@ -134,16 +146,17 @@ Three sources feed the same in-memory `ApprovalGate`:
 - results explicitly approved after `/screen` or REPL `screen`.
 
 On production startup, `run_discord()` loads persisted manual symbols, then
-loads `candidates.csv`, then starts the watcher if the union is non-empty.
+loads `candidates.csv` as the automatic set, then starts the watcher if the
+union is non-empty.
 `WatchController` restarts the websocket whenever the gate changes.
 
-Only symbols added through Discord `/watch` are stored in
-`alertengine/data/manual_watchlist.txt`. `ApprovalGate` itself does not track
-where a symbol came from. Both commands accept whitespace-separated ticker
-lists, apply the valid subset once, and report invalid tokens as skipped.
-Consequently `/unwatch` removes the valid supplied symbols from the current
-gate; a symbol still present in `candidates.csv` can return after the next
-service restart.
+`WatchController._automatic` tracks the latest pre-screen set in memory and
+`candidates.csv` persists it across restarts. `WatchController._manual` tracks
+explicit `/watch` choices and `alertengine/data/manual_watchlist.txt` persists
+them. `ApprovalGate` contains their active union. A new pre-screen replaces the
+automatic set: disappeared candidates are ejected, while overlapping or manual
+symbols remain. `/unwatch` removes a symbol from the current gate; if it passes
+a future pre-screen it can be automatically selected again.
 
 `/stop confirm:true` stops market streaming only. The Discord bot and systemd
 service remain online, the watchlist remains intact, and `/start` resumes it.
@@ -159,12 +172,15 @@ All pre-screen entry points call `run_prescreen()`:
 - Discord `/prescreen` — launches a child process, immediately acknowledges the
   interaction, and posts the result later.
 
-The deployed schedule is EventBridge `cron(0 10 ? * MON-FRI *)`, or 10:00 UTC
-(02:00 PST / 03:00 PDT). Lambda skips its configured holiday dates, then asks
-SSM to start `market-sentinel-prescreen.service` by instance tag. The on-box
-command performs a second calendar check, scans historical data in bounded
-20-symbol batches, writes the CSV, and restarts the engine. Both the systemd job
-and Discord background job are capped at five minutes.
+The deployed EventBridge Scheduler expression is `cron(0 15 ? * MON-FRI *)`
+with timezone `America/Los_Angeles`, so it stays at 3:00 PM through daylight
+saving changes. Lambda skips configured market holidays, then asks SSM to start
+`market-sentinel-prescreen.service` by instance tag. The on-box command performs
+a second calendar check, fetches 30-minute historical bars in bounded batches,
+keeps only 09:30–16:00 ET regular-session bars, and aggregates them into
+market-open-aligned 4-hour and 1-hour closes. It writes the final intersection,
+reports both legs plus additions/removals to Discord, and restarts the engine.
+Both the systemd job and Discord background job are capped at five minutes.
 
 ## The swappable seams
 
@@ -261,7 +277,7 @@ overlay, not an application-state backup.
 | Change command behavior | `discord_bot.py` and/or `repl.py` |
 | Change subscription lifecycle | `watch_controller.py` |
 | Change bar construction | `aggregator.py` and `tests/test_aggregator.py` |
-| Change overnight scan | `prescreen/` |
+| Change post-close scan | `prescreen/` |
 | Change AWS resources | `infra/terraform/` |
 | Change on-box startup/deploy | `infra/systemd/` and `infra/scripts/` |
 

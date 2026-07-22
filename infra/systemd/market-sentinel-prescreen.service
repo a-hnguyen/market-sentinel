@@ -1,8 +1,8 @@
-# Overnight pre-screen: RSI 4h/1h confluence over Alpaca history → candidates.csv
-# in the repo root (the engine's WorkingDirectory). Self-skips non-trading days.
+# Post-close pre-screen: regular-session RSI 4h/1h confluence → candidates.csv
+# and a Discord audit summary. Self-skips non-trading days.
 # After writing, it restarts the engine so startup auto-approves tonight's list.
 [Unit]
-Description=market-sentinel overnight pre-screen
+Description=market-sentinel post-close pre-screen
 After=network-online.target market-sentinel-config.service
 Wants=network-online.target
 Requires=market-sentinel-config.service
@@ -14,6 +14,6 @@ WorkingDirectory=/opt/market-sentinel/app
 EnvironmentFile=/etc/market-sentinel/engine.env
 # A network/provider regression must fail the scan, never monopolize the box.
 TimeoutStartSec=5min
-ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine.prescreen
+ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine.prescreen --notify
 # '+' runs as root: the service user can't restart a system unit on its own.
 ExecStartPost=+/usr/bin/systemctl restart market-sentinel.service

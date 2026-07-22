@@ -25,6 +25,7 @@ class WatchController:
         self._lock = asyncio.Lock()
         self._enabled = False
         self._manual: set[str] = set()
+        self._automatic: set[str] = set()
         self._active_symbols: tuple[str, ...] = ()
         self._log = logging.getLogger("alertengine.watch")
 
@@ -35,6 +36,14 @@ class WatchController:
     @property
     def active_symbols(self) -> list[str]:
         return list(self._active_symbols)
+
+    @property
+    def manual_symbols(self) -> list[str]:
+        return sorted(self._manual)
+
+    @property
+    def automatic_symbols(self) -> list[str]:
+        return sorted(self._automatic)
 
     @staticmethod
     def normalize(symbol: str) -> str:
@@ -72,6 +81,12 @@ class WatchController:
             self._manual.update(symbols)
             self.engine.gate.approve(*symbols)
         return sorted(set(symbols))
+
+    def load_automatic(self, symbols: list[str]) -> list[str]:
+        self._automatic = {self.normalize(symbol) for symbol in symbols}
+        if self._automatic:
+            self.engine.gate.approve(*self._automatic)
+        return self.automatic_symbols
 
     def _save_manual(self) -> None:
         path = Path(settings.MANUAL_WATCHLIST_PATH)
@@ -151,6 +166,29 @@ class WatchController:
                 self._enabled = True
                 await self._restart_task()
             return symbols
+
+    async def replace_automatic(
+        self, symbols: list[str], start: bool = True
+    ) -> list[str]:
+        """Replace pre-screen-owned symbols while retaining manual choices."""
+        values = {self.normalize(symbol) for symbol in symbols}
+        async with self._lock:
+            stale = self._automatic - values - self._manual
+            if stale:
+                self.engine.gate.remove(*stale)
+            self._automatic = values
+            if values:
+                self.engine.gate.approve(*values)
+            watchlist = self.engine.gate.watchlist()
+            if start and watchlist:
+                if self.running and tuple(watchlist) == self._active_symbols:
+                    return watchlist
+                self._enabled = True
+                await self._restart_task()
+            elif not watchlist:
+                self._enabled = False
+                await self._cancel_task()
+            return watchlist
 
     async def _restart_task(self) -> None:
         await self._cancel_task()

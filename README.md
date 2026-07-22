@@ -22,10 +22,10 @@ approved watchlist ─▶ Alpaca 1-min bars ─▶ 2-min aggregation
                                       console + Discord alerts
 ```
 
-A separate scheduled pre-screen evaluates a curated watchlist over historical
-4-hour and 1-hour data and writes the survivors to `candidates.csv`. Production
-runs on one EC2 instance under systemd; EventBridge, Lambda, and SSM trigger the
-pre-screen without opening inbound ports.
+A separate post-close pre-screen evaluates a curated watchlist over
+regular-session-only 4-hour and 1-hour data and writes their intersection to
+`candidates.csv`. Production runs on one EC2 instance under systemd; EventBridge
+Scheduler, Lambda, and SSM trigger it without opening inbound ports.
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) next for the component-by-component
 walkthrough, runtime sequences, persistence boundaries, and failure behavior.

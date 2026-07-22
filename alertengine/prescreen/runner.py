@@ -1,4 +1,4 @@
-"""One-call pre-screen pipeline: watchlist -> RSI confluence -> candidates CSV.
+"""One-call post-close pipeline: watchlist -> RSI confluence -> candidates CSV.
 
 Shared by all three entry points so the logic lives in exactly one place:
   * `python -m alertengine.prescreen`      (standalone / scheduled)
@@ -10,12 +10,13 @@ credentials aren't set (from AlpacaFeed) — callers decide how to report those.
 """
 
 from .. import settings
-from .screener import PreScreener, ScreenResult
-from .sinks import CsvSink
+from .screener import PreScreener, PreScreenReport, ScreenResult
+from .reporting import save_report
+from .sinks import CsvSink, load_candidates
 from .watchlist import read_watchlist
 
 
-def run_prescreen(feed=None) -> list[ScreenResult]:
+def run_prescreen_report(feed=None) -> PreScreenReport:
     """Run the scan once, write survivors to the candidates CSV, return them.
 
     `feed` is injectable for tests; in production it defaults to a real
@@ -26,10 +27,23 @@ def run_prescreen(feed=None) -> list[ScreenResult]:
         from ..feeds.alpaca_feed import AlpacaFeed
 
         feed = AlpacaFeed()
-    results = PreScreener(feed).run(watchlist)
+    try:
+        previous = set(load_candidates(settings.PRESCREEN_OUTPUT_PATH))
+    except FileNotFoundError:
+        previous = set()
+    report = PreScreener(feed).run_report(watchlist)
+    current = {result.symbol for result in report.results}
+    report.added = sorted(current - previous)
+    report.removed = sorted(previous - current)
     CsvSink(
         settings.PRESCREEN_OUTPUT_PATH,
         slow_label=f"rsi_{settings.PRESCREEN_SLOW_HOURS}h",
         fast_label=f"rsi_{settings.PRESCREEN_FAST_HOURS}h",
-    ).write(results)
-    return results
+    ).write(report.results)
+    save_report(report, settings.PRESCREEN_REPORT_PATH)
+    return report
+
+
+def run_prescreen(feed=None) -> list[ScreenResult]:
+    """Run the scan and return its final intersection (legacy public API)."""
+    return run_prescreen_report(feed).results

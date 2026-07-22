@@ -1,17 +1,17 @@
-"""Run the overnight pre-screen once and write tonight's candidates.
+"""Run the post-close pre-screen once and write next session's candidates.
 
     python -m alertengine.prescreen
 
 Reads ALPACA_API_KEY / ALPACA_SECRET_KEY from .env, loads the curated watchlist,
 runs the RSI 4h/1h confluence over Alpaca historical bars, and writes survivors
-to a CSV for the morning. Runs any time (historical data), so it can be invoked
-the night before or by the deployed pre-market schedule.
+to a CSV for the next session. Runs any time from historical data; production
+invokes it after the regular session closes.
 In AWS this becomes the EventBridge-scheduled Lambda edge; the pipeline
 (run_prescreen) is identical, only the sink changes.
 
 Because a weekday schedule still fires on market holidays, this skips on non-trading
 days (writing nothing, so a stale-dated CSV isn't produced). Pass --force to run
-anyway, e.g. to pre-build the night before from the prior session's bars.
+anyway, e.g. for an explicit manual rerun.
 """
 
 import sys
@@ -20,7 +20,8 @@ from dotenv import load_dotenv
 
 from .. import settings
 from .calendar import is_trading_day, today_et
-from .runner import run_prescreen
+from .reporting import send_discord_summary, summary_messages
+from .runner import run_prescreen_report
 
 
 def main() -> int:
@@ -31,7 +32,7 @@ def main() -> int:
         return 0
 
     try:
-        results = run_prescreen()
+        report = run_prescreen_report()
     except FileNotFoundError:
         print(
             f"watchlist not found at {settings.PRESCREEN_WATCHLIST_PATH!r} — "
@@ -44,12 +45,22 @@ def main() -> int:
 
     slow_label = f"rsi_{settings.PRESCREEN_SLOW_HOURS}h"
     fast_label = f"rsi_{settings.PRESCREEN_FAST_HOURS}h"
-    print(f"{len(results)} oversold survivor(s) -> {settings.PRESCREEN_OUTPUT_PATH!r}")
-    for r in results:
+    print(
+        f"{len(report.results)} oversold survivor(s) -> "
+        f"{settings.PRESCREEN_OUTPUT_PATH!r}"
+    )
+    for r in report.results:
         print(
             f"  {r.symbol:6} {slow_label}={r.rsi_slow:5.1f}  "
             f"{fast_label}={r.rsi_fast:5.1f}  {r.category}"
         )
+    for message in summary_messages(report):
+        print(message.replace("**", ""))
+    if "--notify" in sys.argv[1:]:
+        try:
+            send_discord_summary(report)
+        except Exception as exc:
+            print(f"Discord pre-screen summary failed: {exc}")
     return 0
 
 

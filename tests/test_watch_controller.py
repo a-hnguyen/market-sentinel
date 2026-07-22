@@ -89,6 +89,28 @@ def test_unwatch_restarts_or_stops(tmp_path, monkeypatch):
     asyncio.run(drive())
 
 
+def test_replace_automatic_removes_stale_but_preserves_manual(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
+
+    async def drive():
+        feed = _Feed()
+        controller = WatchController(_engine(feed))
+        controller.load_automatic(["AAPL", "MSFT"])
+        await controller.watch("AAPL")  # overlap: AAPL is also explicitly manual
+        await asyncio.sleep(0)
+
+        watchlist = await controller.replace_automatic(["NVDA"], start=True)
+        await asyncio.sleep(0)
+
+        assert watchlist == ["AAPL", "NVDA"]
+        assert controller.automatic_symbols == ["NVDA"]
+        assert controller.manual_symbols == ["AAPL"]
+        assert feed.subscriptions[-1] == ["AAPL", "NVDA"]
+        await controller.stop()
+
+    asyncio.run(drive())
+
+
 def test_batch_watch_and_unwatch_restart_once_and_persist(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
 
