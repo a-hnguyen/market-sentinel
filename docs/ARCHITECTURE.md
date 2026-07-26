@@ -59,15 +59,16 @@ Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
                                                    │
                               ┌────────────────────┴────────────────────┐
                               ▼                                         ▼
-                      4-hour RSI matches                         1-hour RSI matches
+                    OVERSOLD: RSI < 30                        OVERBOUGHT: RSI > 70
+                       on 4h and 1h                              on 4h and 1h
                               └────────────────────┬────────────────────┘
                                                    ▼
-                                           intersection (both)
+                                       union, labeled by signal
                                                    │
                               ┌────────────────────┴────────────────────┐
                               ▼                                         ▼
                        candidates.csv                         Discord audit summary
-                   replace automatic set                 legs + added/removed
+                   replace automatic set             both directions + deltas
                               │
                      restart engine
 ```
@@ -153,7 +154,10 @@ union is non-empty.
 `WatchController._automatic` tracks the latest pre-screen set in memory and
 `candidates.csv` persists it across restarts. `WatchController._manual` tracks
 explicit `/watch` choices and `alertengine/data/manual_watchlist.txt` persists
-them. `ApprovalGate` contains their active union. A new pre-screen replaces the
+them locally. In production, each manual change also uploads the full list to
+`private/runtime/manual_watchlist.txt` in the private S3 overlay; the config
+service restores it before the bot starts on a new instance. `ApprovalGate`
+contains their active union. A new pre-screen replaces the
 automatic set: disappeared candidates are ejected, while overlapping or manual
 symbols remain. `/unwatch` removes a symbol from the current gate; if it passes
 a future pre-screen it can be automatically selected again.
@@ -178,8 +182,9 @@ saving changes. Lambda skips configured market holidays, then asks SSM to start
 `market-sentinel-prescreen.service` by instance tag. The on-box command performs
 a second calendar check, fetches 30-minute historical bars in bounded batches,
 keeps only 09:30–16:00 ET regular-session bars, and aggregates them into
-market-open-aligned 4-hour and 1-hour closes. It writes the final intersection,
-reports both legs plus additions/removals to Discord, and restarts the engine.
+market-open-aligned 4-hour and 1-hour closes. It selects each direction only
+when both timeframes agree, writes the labeled overbought/oversold union, reports
+both directions plus additions/removals to Discord, and restarts the engine.
 Both the systemd job and Discord background job are capped at five minutes.
 
 ## The swappable seams
@@ -242,7 +247,7 @@ Security and operations:
 - EC2 uses an instance role and IMDSv2; GitHub Actions uses OIDC, so neither
   path stores AWS access keys;
 - SSM Parameter Store holds runtime credentials/IDs; the private S3 bucket holds
-  private strategy files and the curated watchlist;
+  private strategy files, the curated watchlist, and the persisted manual list;
 - application logs currently live in systemd `journald` and are read through
   SSM; Terraform creates a CloudWatch engine log group, but no agent currently
   ships the journal into it;
@@ -250,9 +255,9 @@ Security and operations:
   hook both publish infrastructure alerts through SNS;
 - Lambda writes its own execution logs to its managed CloudWatch log group.
 
-Local `candidates.csv`, `alerts.log`, and the manual watchlist survive process
-restarts but not replacement of the EC2 root volume. S3 is currently an input
-overlay, not an application-state backup.
+Local `candidates.csv` and `alerts.log` survive process restarts but not EC2 root
+volume replacement. The manual watchlist survives replacement through its S3
+copy; automatic candidates can be rebuilt by the post-close pre-screen.
 
 ## Failure behavior
 

@@ -24,6 +24,7 @@ from alertengine.prescreen.watchlist import read_watchlist
 # a rising series drives it toward 100. Long enough for RSI(14).
 FALLING = [100.0 - i for i in range(40)]
 RISING = [10.0 + i for i in range(40)]
+NEUTRAL = [100.0 + (1 if i % 2 else 0) for i in range(40)]
 
 
 class _FakeFeed:
@@ -106,13 +107,24 @@ def test_report_exposes_each_timeframe_and_intersection():
             ("SLOW", 1): RISING,
             ("FAST", 4): RISING,
             ("FAST", 1): FALLING,
+            ("HIGH", 4): RISING,
+            ("HIGH", 1): RISING,
         },
     )
-    report = PreScreener(feed).run_report([("BOTH", ""), ("SLOW", ""), ("FAST", "")])
+    report = PreScreener(feed).run_report(
+        [("BOTH", ""), ("SLOW", ""), ("FAST", ""), ("HIGH", "")]
+    )
 
-    assert report.slow_matches == ["BOTH", "SLOW"]
-    assert report.fast_matches == ["BOTH", "FAST"]
-    assert [result.symbol for result in report.results] == ["BOTH"]
+    assert report.oversold_slow_matches == ["BOTH", "SLOW"]
+    assert report.oversold_fast_matches == ["BOTH", "FAST"]
+    assert [result.symbol for result in report.oversold_results] == ["BOTH"]
+    assert report.overbought_slow_matches == ["FAST", "HIGH"]
+    assert report.overbought_fast_matches == ["SLOW", "HIGH"]
+    assert [result.symbol for result in report.overbought_results] == ["HIGH"]
+    assert [(result.symbol, result.signal) for result in report.results] == [
+        ("BOTH", "oversold"),
+        ("HIGH", "overbought"),
+    ]
 
 
 def test_run_sorts_most_oversold_first():
@@ -208,9 +220,16 @@ def test_csv_sink_writes_header_and_rows(tmp_path):
         [ScreenResult("OUST", 12.3, 8.9, "favs", ts)]
     )
     rows = list(csv.reader(out.open()))
-    assert rows[0] == ["Ticker", "rsi_4h", "rsi_1h", "category", "scanned_at"]
-    assert rows[1][:4] == ["OUST", "12.3", "8.9", "favs"]
-    assert rows[1][4].startswith("2026-07-09T23:00")
+    assert rows[0] == [
+        "Ticker",
+        "rsi_4h",
+        "rsi_1h",
+        "signal",
+        "category",
+        "scanned_at",
+    ]
+    assert rows[1][:5] == ["OUST", "12.3", "8.9", "oversold", "favs"]
+    assert rows[1][5].startswith("2026-07-09T23:00")
 
 
 def test_csv_sink_overwrites_previous_run(tmp_path):
@@ -318,12 +337,14 @@ def test_run_prescreen_writes_csv_and_returns_survivors(tmp_path, monkeypatch):
         runner.settings, "PRESCREEN_REPORT_PATH", str(tmp_path / "report.json")
     )
 
-    feed = _FakeFeed({"HOT": FALLING, "COLD": RISING})  # only HOT is oversold
+    feed = _FakeFeed({"HOT": FALLING, "COLD": RISING})
     results = runner.run_prescreen(feed=feed)
 
-    assert [r.symbol for r in results] == ["HOT"]
-    # The CSV was written and round-trips back to the same survivor.
-    assert load_candidates(str(out)) == ["HOT"]
+    assert [(r.symbol, r.signal) for r in results] == [
+        ("HOT", "oversold"),
+        ("COLD", "overbought"),
+    ]
+    assert load_candidates(str(out)) == ["HOT", "COLD"]
 
 
 def test_run_report_tracks_added_and_removed_candidates(tmp_path, monkeypatch):
@@ -343,7 +364,7 @@ def test_run_report_tracks_added_and_removed_candidates(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.settings, "PRESCREEN_REPORT_PATH", str(report_path))
 
     report = runner.run_prescreen_report(
-        feed=_FakeFeed({"HOT": FALLING, "OLD": RISING})
+        feed=_FakeFeed({"HOT": FALLING, "OLD": NEUTRAL})
     )
 
     assert report.added == ["HOT"]

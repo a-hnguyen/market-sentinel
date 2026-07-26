@@ -28,6 +28,8 @@ discord_allowed_user_ids=$(get discord_allowed_user_ids)
   echo "DISCORD_GUILD_ID=$discord_guild_id"
   echo "DISCORD_CHANNEL_ID=$discord_channel_id"
   echo "DISCORD_ALLOWED_USER_IDS=$discord_allowed_user_ids"
+  echo "AWS_REGION=$AWS_REGION"
+  echo "MANUAL_WATCHLIST_S3_URI=s3://$OVERLAY_BUCKET/private/runtime/manual_watchlist.txt"
 } > "$ENV_FILE"
 
 # Readable only by the service user that runs the engine.

@@ -95,14 +95,18 @@ def test_prescreen_job_runs_in_subprocess_and_reports_results(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_subprocess)
     monkeypatch.setattr(
-        "alertengine.discord_bot.load_candidates", lambda path: ["AAPL", "MSFT"]
+        "alertengine.discord_bot.load_candidates", lambda path: ["AAPL", "NVDA"]
     )
     monkeypatch.setattr(
         "alertengine.discord_bot.load_report",
         lambda path: {
-            "slow_matches": ["AAPL", "MSFT"],
-            "fast_matches": ["AAPL"],
-            "final": ["AAPL", "MSFT"],
+            "oversold_slow_matches": ["AAPL", "MSFT"],
+            "oversold_fast_matches": ["AAPL"],
+            "oversold_final": ["AAPL"],
+            "overbought_slow_matches": ["NVDA"],
+            "overbought_fast_matches": ["NVDA"],
+            "overbought_final": ["NVDA"],
+            "automatic": ["AAPL", "NVDA"],
             "added": ["MSFT"],
             "removed": ["TSLA"],
         },
@@ -111,10 +115,11 @@ def test_prescreen_job_runs_in_subprocess_and_reports_results(monkeypatch):
     asyncio.run(bot._run_prescreen_job(FakeChannel()))
 
     assert gate.approved == []
-    assert controller.replaced == (["AAPL", "MSFT"], True)
+    assert controller.replaced == (["AAPL", "NVDA"], True)
     assert "Removed: TSLA" in messages[0]
-    assert "4-hour RSI (2):** AAPL, MSFT" in messages[1]
-    assert "Final intersection (2):** AAPL, MSFT" in messages[3]
+    assert "OVERSOLD · 4-hour RSI < 30 (2):** AAPL, MSFT" in messages[1]
+    assert "OVERBOUGHT · both (1):** NVDA" in messages[6]
+    assert "Automatic watchlist (2):** AAPL, NVDA" in messages[7]
 
 
 def test_prescreen_job_kills_timed_out_process(monkeypatch):

@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from datetime import datetime
 from typing import AsyncIterator
 
@@ -109,6 +110,65 @@ def test_replace_automatic_removes_stale_but_preserves_manual(tmp_path, monkeypa
         await controller.stop()
 
     asyncio.run(drive())
+
+
+def test_manual_changes_upload_to_s3_when_configured(tmp_path, monkeypatch):
+    path = tmp_path / "watch.txt"
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(path))
+    monkeypatch.setenv(
+        "MANUAL_WATCHLIST_S3_URI",
+        "s3://private-bucket/private/runtime/manual_watchlist.txt",
+    )
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs, path.read_text()))
+
+    monkeypatch.setattr("alertengine.watch_controller.subprocess.run", fake_run)
+
+    async def drive():
+        controller = WatchController(_engine(_Feed()))
+        await controller.watch_many("AAPL MSFT")
+        await controller.stop()
+        assert controller.persistence_status == {
+            "s3_configured": True,
+            "last_error": None,
+        }
+
+    asyncio.run(drive())
+
+    assert calls[0][0] == [
+        "aws",
+        "s3",
+        "cp",
+        str(path),
+        "s3://private-bucket/private/runtime/manual_watchlist.txt",
+        "--region",
+        "us-east-1",
+    ]
+    assert calls[0][1]["timeout"] == 20
+    assert calls[0][2] == "AAPL\nMSFT\n"
+
+
+def test_s3_failure_keeps_local_watchlist_and_surfaces_status(tmp_path, monkeypatch):
+    path = tmp_path / "watch.txt"
+    monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(path))
+    monkeypatch.setenv("MANUAL_WATCHLIST_S3_URI", "s3://private-bucket/manual.txt")
+
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="upload denied")
+
+    monkeypatch.setattr("alertengine.watch_controller.subprocess.run", fail)
+
+    async def drive():
+        controller = WatchController(_engine(_Feed()))
+        await controller.watch("AAPL")
+        await controller.stop()
+        assert controller.persistence_status["last_error"] == "upload denied"
+
+    asyncio.run(drive())
+    assert path.read_text() == "AAPL\n"
 
 
 def test_batch_watch_and_unwatch_restart_once_and_persist(tmp_path, monkeypatch):

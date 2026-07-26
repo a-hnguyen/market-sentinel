@@ -158,16 +158,36 @@ class DiscordBot(discord.Client, Notifier):
                 f"Removed: {self._symbols(report['removed'])}"
             )
             await channel.send(
-                f"**4-hour RSI ({len(report['slow_matches'])}):** "
-                f"{self._symbols(report['slow_matches'])}"
+                f"**OVERSOLD · 4-hour RSI < 30 "
+                f"({len(report['oversold_slow_matches'])}):** "
+                f"{self._symbols(report['oversold_slow_matches'])}"
             )
             await channel.send(
-                f"**1-hour RSI ({len(report['fast_matches'])}):** "
-                f"{self._symbols(report['fast_matches'])}"
+                f"**OVERSOLD · 1-hour RSI < 30 "
+                f"({len(report['oversold_fast_matches'])}):** "
+                f"{self._symbols(report['oversold_fast_matches'])}"
             )
             await channel.send(
-                f"**Final intersection ({len(report['final'])}):** "
-                f"{self._symbols(report['final'])}"
+                f"**OVERSOLD · both ({len(report['oversold_final'])}):** "
+                f"{self._symbols(report['oversold_final'])}"
+            )
+            await channel.send(
+                f"**OVERBOUGHT · 4-hour RSI > 70 "
+                f"({len(report['overbought_slow_matches'])}):** "
+                f"{self._symbols(report['overbought_slow_matches'])}"
+            )
+            await channel.send(
+                f"**OVERBOUGHT · 1-hour RSI > 70 "
+                f"({len(report['overbought_fast_matches'])}):** "
+                f"{self._symbols(report['overbought_fast_matches'])}"
+            )
+            await channel.send(
+                f"**OVERBOUGHT · both ({len(report['overbought_final'])}):** "
+                f"{self._symbols(report['overbought_final'])}"
+            )
+            await channel.send(
+                f"**Automatic watchlist ({len(report['automatic'])}):** "
+                f"{self._symbols(report['automatic'])}"
             )
         except asyncio.CancelledError:
             if process is not None and process.returncode is None:
@@ -194,6 +214,8 @@ class DiscordBot(discord.Client, Notifier):
                 lines.append(f"✅ Added and streaming: **{self._symbols(added)}**")
             if invalid:
                 lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            if self.controller.persistence_status["last_error"]:
+                lines.append("⚠️ Saved locally, but S3 persistence failed.")
             lines.append(f"Watchlist: {self._symbols(symbols)}")
             await interaction.followup.send("\n".join(lines))
 
@@ -213,6 +235,8 @@ class DiscordBot(discord.Client, Notifier):
                 lines.append(f"🛑 Removed: **{self._symbols(removed)}**")
             if invalid:
                 lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            if self.controller.persistence_status["last_error"]:
+                lines.append("⚠️ Saved locally, but S3 persistence failed.")
             lines.append(f"Watchlist: {self._symbols(symbols)}")
             await interaction.followup.send("\n".join(lines))
 
@@ -263,6 +287,7 @@ class DiscordBot(discord.Client, Notifier):
             status_data["watchlist"] = self.engine.gate.watchlist()
             status_data["automatic_symbols"] = self.controller.automatic_symbols
             status_data["manual_symbols"] = self.controller.manual_symbols
+            status_data["manual_persistence"] = self.controller.persistence_status
             if stock:
                 try:
                     symbol = self.controller.normalize(stock)

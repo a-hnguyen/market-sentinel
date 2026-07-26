@@ -48,7 +48,14 @@ class CsvSink(CandidateSink):
         with open(self.path, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(
-                ["Ticker", self.slow_label, self.fast_label, "category", "scanned_at"]
+                [
+                    "Ticker",
+                    self.slow_label,
+                    self.fast_label,
+                    "signal",
+                    "category",
+                    "scanned_at",
+                ]
             )
             for r in results:
                 w.writerow(
@@ -56,6 +63,7 @@ class CsvSink(CandidateSink):
                         r.symbol,
                         f"{r.rsi_slow:.1f}",
                         f"{r.rsi_fast:.1f}",
+                        r.signal,
                         r.category,
                         r.scanned_at.isoformat(),
                     ]

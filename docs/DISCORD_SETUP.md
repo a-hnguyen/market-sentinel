@@ -76,8 +76,9 @@ Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 `/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
 
 - `/watch STOCKS` accepts one or more space-separated symbols, persists the
-  valid entries, reports invalid entries as skipped, and starts/restarts
-  streaming once.
+  valid entries locally and to the private S3 overlay, reports invalid entries
+  as skipped, and starts/restarts streaming once. If S3 fails, the local change
+  still applies and Discord reports the persistence warning.
 - `/unwatch STOCKS` accepts the same format and removes every supplied symbol
   that is valid from the current gate and manual-symbol file in one update. It
   reports invalid entries as skipped. A symbol remaining in `candidates.csv`
@@ -85,9 +86,10 @@ Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 - `/stop confirm:true` stops only market streaming; Discord stays online and
   `/start` resumes the existing watchlist.
 - `/prescreen` responds immediately, scans in a background child process, and
-  posts the regular-session 4-hour list, 1-hour list, final intersection, and
-  automatic additions/removals later. A second request is rejected while one
-  is running.
+  posts separately labeled 4-hour, 1-hour, and final-intersection lists for
+  oversold (`RSI < 30`) and overbought (`RSI > 70`) candidates, followed by the
+  combined automatic watchlist and additions/removals. A second request is
+  rejected while one is running.
 - `/status` includes watcher state, per-symbol state, and whether the configured
   Pacific alert window is currently open. It also separates automatic
   pre-screen symbols from explicit manual `/watch` symbols.

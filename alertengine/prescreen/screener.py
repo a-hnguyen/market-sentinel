@@ -1,11 +1,8 @@
-"""The pre-screen itself: RSI-only oversold confluence across two timeframes.
+"""RSI-only overbought/oversold confluence across two timeframes.
 
-A ticker survives only if RSI(14) is below the oversold threshold on BOTH the
-slow timeframe (e.g. 4h) and the fast timeframe (e.g. 1h). The slow side has
-inertia (a genuinely beaten-down name stays oversold for days); the fast side
-re-shuffles quickly. Requiring both keeps the sticky, real setups and drops the
-noise. There is deliberately no Bollinger check here — the swing screen is
-RSI-only.
+A ticker survives when RSI(14) is either below the oversold threshold on both
+timeframes or above the overbought threshold on both. There is deliberately no
+Bollinger check here; BB remains part of the live two-minute setup rules.
 
 `evaluate_confluence` is pure (closes in, verdict out) so it's unit-testable
 without a feed; `PreScreener.run` orchestrates the batched historical fetches.
@@ -25,17 +22,26 @@ class ScreenResult:
     rsi_fast: float  # RSI on the fast timeframe (e.g. 1h)
     category: str  # the watchlist "List" label this ticker came from
     scanned_at: datetime
+    signal: str = "oversold"
 
 
 @dataclass
 class PreScreenReport:
-    """Observable output of both RSI legs and their final intersection."""
+    """Observable output of both timeframes for both signal directions."""
 
-    slow_matches: list[str]
-    fast_matches: list[str]
-    results: list[ScreenResult]
+    oversold_slow_matches: list[str] = field(default_factory=list)
+    oversold_fast_matches: list[str] = field(default_factory=list)
+    oversold_results: list[ScreenResult] = field(default_factory=list)
+    overbought_slow_matches: list[str] = field(default_factory=list)
+    overbought_fast_matches: list[str] = field(default_factory=list)
+    overbought_results: list[ScreenResult] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+
+    @property
+    def results(self) -> list[ScreenResult]:
+        """Combined automatic watchlist, with direction retained per row."""
+        return [*self.oversold_results, *self.overbought_results]
 
 
 def evaluate_confluence(
@@ -63,6 +69,7 @@ class PreScreener:
         fast_lookback_days: int = settings.PRESCREEN_FAST_LOOKBACK_DAYS,
         rsi_period: int = settings.RSI_PERIOD,
         rsi_threshold: float = settings.PRESCREEN_RSI_THRESHOLD,
+        rsi_overbought_threshold: float = settings.PRESCREEN_RSI_OVERBOUGHT,
     ) -> None:
         # feed is anything with fetch_closes(symbols, hours, lookback_days)
         # -> {SYMBOL: [closes]} (AlpacaFeed in production, a fake in tests).
@@ -73,13 +80,14 @@ class PreScreener:
         self.fast_lookback_days = fast_lookback_days
         self.rsi_period = rsi_period
         self.rsi_threshold = rsi_threshold
+        self.rsi_overbought_threshold = rsi_overbought_threshold
 
     def run_report(self, watchlist: list[tuple[str, str]]) -> PreScreenReport:
-        """Scan once and expose each RSI leg plus their intersection."""
+        """Expose each RSI leg and intersection for both directions."""
         symbols = [sym for sym, _ in watchlist]
         category = {sym: cat for sym, cat in watchlist}
         if not symbols:
-            return PreScreenReport([], [], [])
+            return PreScreenReport()
 
         slow = self.feed.fetch_closes(
             symbols,
@@ -95,32 +103,47 @@ class PreScreener:
         )
         now = datetime.now(timezone.utc)
 
-        results: list[ScreenResult] = []
-        slow_matches: list[str] = []
-        fast_matches: list[str] = []
+        report = PreScreenReport()
         for sym in symbols:
-            verdict = evaluate_confluence(
-                slow.get(sym, []),
-                fast.get(sym, []),
-                self.rsi_period,
-                self.rsi_threshold,
-            )
-            if verdict is None:
+            slow_closes = slow.get(sym, [])
+            fast_closes = fast.get(sym, [])
+            if (
+                len(slow_closes) <= self.rsi_period
+                or len(fast_closes) <= self.rsi_period
+            ):
                 continue  # not enough history on one side; skip quietly
-            oversold, r_slow, r_fast = verdict
+            r_slow = rsi(slow_closes, self.rsi_period)
+            r_fast = rsi(fast_closes, self.rsi_period)
             if r_slow < self.rsi_threshold:
-                slow_matches.append(sym)
+                report.oversold_slow_matches.append(sym)
             if r_fast < self.rsi_threshold:
-                fast_matches.append(sym)
-            if oversold:
-                results.append(
-                    ScreenResult(sym, r_slow, r_fast, category.get(sym, ""), now)
+                report.oversold_fast_matches.append(sym)
+            if r_slow > self.rsi_overbought_threshold:
+                report.overbought_slow_matches.append(sym)
+            if r_fast > self.rsi_overbought_threshold:
+                report.overbought_fast_matches.append(sym)
+            if r_slow < self.rsi_threshold and r_fast < self.rsi_threshold:
+                report.oversold_results.append(
+                    ScreenResult(
+                        sym, r_slow, r_fast, category.get(sym, ""), now, "oversold"
+                    )
+                )
+            elif (
+                r_slow > self.rsi_overbought_threshold
+                and r_fast > self.rsi_overbought_threshold
+            ):
+                report.overbought_results.append(
+                    ScreenResult(
+                        sym, r_slow, r_fast, category.get(sym, ""), now, "overbought"
+                    )
                 )
 
-        # Most oversold first (lowest combined RSI at the top of the sheet).
-        results.sort(key=lambda r: r.rsi_slow + r.rsi_fast)
-        return PreScreenReport(slow_matches, fast_matches, results)
+        report.oversold_results.sort(key=lambda r: r.rsi_slow + r.rsi_fast)
+        report.overbought_results.sort(
+            key=lambda r: r.rsi_slow + r.rsi_fast, reverse=True
+        )
+        return report
 
     def run(self, watchlist: list[tuple[str, str]]) -> list[ScreenResult]:
-        """Compatibility wrapper returning only the final intersection."""
+        """Return the union of final oversold and overbought intersections."""
         return self.run_report(watchlist).results

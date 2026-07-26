@@ -50,7 +50,7 @@ infra/
 | **EC2** | Always-on box running the engine (persistent Alpaca websocket) | core |
 | **IAM** | Least-priv instance role; no static keys anywhere | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
-| **S3** | Private strategy overlay; lifecycle-ready archive prefix (unused today) | core |
+| **S3** | Private strategy overlay plus manual-watchlist persistence | core |
 | **CloudWatch** | EC2 status alarm, Lambda logs, and a reserved engine log group | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |
@@ -58,7 +58,7 @@ infra/
 | **Resource Groups** | One console view of every `Project`-tagged resource | free |
 
 No RDS (no managed Postgres) — local disk holds `candidates.csv`, `alerts.log`,
-and the manual watchlist. Engine stdout/stderr currently stays in journald. The
+and a working copy of the S3-backed manual watchlist. Engine stdout/stderr stays in journald. The
 Terraform engine log group exists, but no CloudWatch agent currently ships the
 journal into it.
 
@@ -115,8 +115,8 @@ EventBridge Scheduler uses `cron(0 15 ? * MON-FRI *)` in
 its configured market-holiday dates and sends an SSM Run Command targeting the
 EC2 `Project=market-sentinel` tag. The on-box command checks Alpaca's calendar
 again, runs `market-sentinel-prescreen.service`, writes `candidates.csv`, sends
-both RSI lists, their intersection, additions, and removals to Discord, then
-restarts the engine so the new automatic candidates are loaded.
+the separately labeled overbought/oversold RSI legs, intersections, combined
+automatic list, additions, and removals to Discord, then restarts the engine.
 
 Inspect or trigger it manually:
 

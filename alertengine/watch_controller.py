@@ -8,7 +8,9 @@ in-memory set that the already-open Alpaca websocket never sees.
 
 import asyncio
 import logging
+import os
 import re
+import subprocess
 from pathlib import Path
 
 from . import settings
@@ -26,6 +28,9 @@ class WatchController:
         self._enabled = False
         self._manual: set[str] = set()
         self._automatic: set[str] = set()
+        self._manual_s3_uri = os.environ.get("MANUAL_WATCHLIST_S3_URI", "").strip()
+        self._aws_region = os.environ.get("AWS_REGION", "").strip()
+        self._persistence_error: str | None = None
         self._active_symbols: tuple[str, ...] = ()
         self._log = logging.getLogger("alertengine.watch")
 
@@ -44,6 +49,13 @@ class WatchController:
     @property
     def automatic_symbols(self) -> list[str]:
         return sorted(self._automatic)
+
+    @property
+    def persistence_status(self) -> dict[str, str | bool | None]:
+        return {
+            "s3_configured": bool(self._manual_s3_uri),
+            "last_error": self._persistence_error,
+        }
 
     @staticmethod
     def normalize(symbol: str) -> str:
@@ -88,7 +100,7 @@ class WatchController:
             self.engine.gate.approve(*self._automatic)
         return self.automatic_symbols
 
-    def _save_manual(self) -> None:
+    async def _save_manual(self) -> None:
         path = Path(settings.MANUAL_WATCHLIST_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(f"{path.suffix}.tmp")
@@ -96,6 +108,29 @@ class WatchController:
             "".join(f"{s}\n" for s in sorted(self._manual)), encoding="utf-8"
         )
         temporary.replace(path)
+        if not self._manual_s3_uri:
+            self._persistence_error = None
+            return
+        command = ["aws", "s3", "cp", str(path), self._manual_s3_uri]
+        if self._aws_region:
+            command.extend(["--region", self._aws_region])
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self._persistence_error = None
+        except (OSError, subprocess.SubprocessError) as exc:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            self._persistence_error = detail.strip()
+            self._log.error(
+                "manual watchlist saved locally but S3 upload failed: %s",
+                self._persistence_error,
+            )
 
     async def start(self) -> list[str]:
         async with self._lock:
@@ -126,7 +161,7 @@ class WatchController:
             already_active = all(value in self._active_symbols for value in values)
             self.engine.gate.approve(*values)
             self._manual.update(values)
-            self._save_manual()
+            await self._save_manual()
             self._enabled = True
             if not (already_active and self.running):
                 await self._restart_task()
@@ -147,7 +182,7 @@ class WatchController:
             was_active = any(value in self._active_symbols for value in values)
             self.engine.gate.remove(*values)
             self._manual.difference_update(values)
-            self._save_manual()
+            await self._save_manual()
             remaining = self.engine.gate.watchlist()
             if was_active and self._enabled and remaining:
                 await self._restart_task()

@@ -13,24 +13,37 @@ def _symbols(symbols: list[str]) -> str:
 
 
 def summary_messages(report: PreScreenReport) -> list[str]:
-    final = [result.symbol for result in report.results]
+    oversold_final = [result.symbol for result in report.oversold_results]
+    overbought_final = [result.symbol for result in report.overbought_results]
+    automatic = [result.symbol for result in report.results]
     return [
         "**Pre-screen complete (regular session only)**\n"
         f"Added: {_symbols(report.added)}\n"
         f"Removed: {_symbols(report.removed)}",
-        f"**4-hour RSI matches ({len(report.slow_matches)}):** "
-        f"{_symbols(report.slow_matches)}",
-        f"**1-hour RSI matches ({len(report.fast_matches)}):** "
-        f"{_symbols(report.fast_matches)}",
-        f"**Final intersection ({len(final)}):** {_symbols(final)}",
+        f"**OVERSOLD · 4-hour RSI < 30 ({len(report.oversold_slow_matches)}):** "
+        f"{_symbols(report.oversold_slow_matches)}",
+        f"**OVERSOLD · 1-hour RSI < 30 ({len(report.oversold_fast_matches)}):** "
+        f"{_symbols(report.oversold_fast_matches)}",
+        f"**OVERSOLD · both ({len(oversold_final)}):** {_symbols(oversold_final)}",
+        f"**OVERBOUGHT · 4-hour RSI > 70 ({len(report.overbought_slow_matches)}):** "
+        f"{_symbols(report.overbought_slow_matches)}",
+        f"**OVERBOUGHT · 1-hour RSI > 70 ({len(report.overbought_fast_matches)}):** "
+        f"{_symbols(report.overbought_fast_matches)}",
+        f"**OVERBOUGHT · both ({len(overbought_final)}):** "
+        f"{_symbols(overbought_final)}",
+        f"**Automatic watchlist ({len(automatic)}):** {_symbols(automatic)}",
     ]
 
 
 def save_report(report: PreScreenReport, path: str) -> None:
     payload = {
-        "slow_matches": report.slow_matches,
-        "fast_matches": report.fast_matches,
-        "final": [result.symbol for result in report.results],
+        "oversold_slow_matches": report.oversold_slow_matches,
+        "oversold_fast_matches": report.oversold_fast_matches,
+        "oversold_final": [result.symbol for result in report.oversold_results],
+        "overbought_slow_matches": report.overbought_slow_matches,
+        "overbought_fast_matches": report.overbought_fast_matches,
+        "overbought_final": [result.symbol for result in report.overbought_results],
+        "automatic": [result.symbol for result in report.results],
         "added": report.added,
         "removed": report.removed,
     }

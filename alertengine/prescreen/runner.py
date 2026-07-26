@@ -45,5 +45,5 @@ def run_prescreen_report(feed=None) -> PreScreenReport:
 
 
 def run_prescreen(feed=None) -> list[ScreenResult]:
-    """Run the scan and return its final intersection (legacy public API)."""
+    """Return the union of final oversold and overbought intersections."""
     return run_prescreen_report(feed).results

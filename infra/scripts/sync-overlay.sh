@@ -19,6 +19,11 @@ aws s3 cp "$S3/settings_local.py" "$AE/settings_local.py" \
 aws s3 cp "$S3/watchlist.xls" "$AE/data/watchlist.xls" \
   --region "$AWS_REGION" || echo "no watchlist.xls in overlay (prescreen will skip)"
 
+# User-managed symbols must survive EC2 replacements. Runtime writes upload the
+# same object after every /watch or /unwatch; a missing first-boot object is fine.
+aws s3 cp "$S3/runtime/manual_watchlist.txt" "$AE/data/manual_watchlist.txt" \
+  --region "$AWS_REGION" || echo "no persisted manual watchlist in overlay"
+
 # Private rule package (the real IP). Sync the whole dir if present.
 if aws s3 ls "$S3/rules/_private/" --region "$AWS_REGION" >/dev/null 2>&1; then
   mkdir -p "$AE/rules/_private"

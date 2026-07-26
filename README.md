@@ -23,8 +23,9 @@ approved watchlist ─▶ Alpaca 1-min bars ─▶ 2-min aggregation
 ```
 
 A separate post-close pre-screen evaluates a curated watchlist over
-regular-session-only 4-hour and 1-hour data and writes their intersection to
-`candidates.csv`. Production runs on one EC2 instance under systemd; EventBridge
+regular-session-only 4-hour and 1-hour RSI data. It selects stocks that are
+oversold on both timeframes or overbought on both and writes their labeled union
+to `candidates.csv`. Production runs on one EC2 instance under systemd; EventBridge
 Scheduler, Lambda, and SSM trigger it without opening inbound ports.
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) next for the component-by-component
@@ -85,7 +86,7 @@ Replay still enforces the configured alert window against historical bar times.
 - Runtime credentials are SSM SecureStrings; private strategy files arrive from
   a private S3 overlay.
 - Engine logs currently live in journald and are inspected through SSM.
-- Local CSV/log/watchlist files are single-box state and do not survive EC2
-  volume replacement.
+- The manual `/watch` list is backed up to the private S3 overlay and restored
+  after EC2 replacement. Candidate CSVs and logs remain single-box state.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution
   are not part of the current system.

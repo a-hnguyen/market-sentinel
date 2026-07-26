@@ -46,12 +46,12 @@ def main() -> int:
     slow_label = f"rsi_{settings.PRESCREEN_SLOW_HOURS}h"
     fast_label = f"rsi_{settings.PRESCREEN_FAST_HOURS}h"
     print(
-        f"{len(report.results)} oversold survivor(s) -> "
+        f"{len(report.results)} overbought/oversold candidate(s) -> "
         f"{settings.PRESCREEN_OUTPUT_PATH!r}"
     )
     for r in report.results:
         print(
-            f"  {r.symbol:6} {slow_label}={r.rsi_slow:5.1f}  "
+            f"  {r.symbol:6} {r.signal:10} {slow_label}={r.rsi_slow:5.1f}  "
             f"{fast_label}={r.rsi_fast:5.1f}  {r.category}"
         )
     for message in summary_messages(report):
