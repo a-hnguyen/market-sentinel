@@ -248,9 +248,9 @@ Security and operations:
   path stores AWS access keys;
 - SSM Parameter Store holds runtime credentials/IDs; the private S3 bucket holds
   private strategy files, the curated watchlist, and the persisted manual list;
-- application logs currently live in systemd `journald` and are read through
-  SSM; Terraform creates a CloudWatch engine log group, but no agent currently
-  ships the journal into it;
+- structured JSON application logs remain available in systemd `journald` and
+  are also shipped by the CloudWatch agent into per-instance `engine` and
+  `prescreen` streams with 14-day retention;
 - a CloudWatch EC2 status-check alarm and the systemd crash-loop `OnFailure`
   hook both publish infrastructure alerts through SNS;
 - Lambda writes its own execution logs to its managed CloudWatch log group.

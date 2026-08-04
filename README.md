@@ -85,7 +85,8 @@ Replay still enforces the configured alert window against historical bar times.
 - EC2 has no inbound security-group rules; administration uses SSM.
 - Runtime credentials are SSM SecureStrings; private strategy files arrive from
   a private S3 overlay.
-- Engine logs currently live in journald and are inspected through SSM.
+- Structured engine and pre-screen logs are retained for 14 days in CloudWatch
+  Logs and remain locally available through `journalctl`.
 - The manual `/watch` list is backed up to the private S3 overlay and restored
   after EC2 replacement. Candidate CSVs and logs remain single-box state.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution

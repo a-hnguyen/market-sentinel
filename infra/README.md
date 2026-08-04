@@ -24,7 +24,7 @@ infra/
     iam.tf              # least-priv instance role + profile
     s3.tf               # private overlay bucket; archive prefix reserved
     ssm.tf              # encrypted runtime config slots (set out-of-band)
-    cloudwatch.tf       # reserved engine log group + EC2 status alarm
+    cloudwatch.tf       # retained application logs + EC2 status alarm
     sns.tf              # shared ops topic and optional email subscription
     lambda.tf           # thin pre-screen trigger
     eventbridge.tf      # timezone-aware weekday 3:00 PM Pacific schedule
@@ -51,16 +51,15 @@ infra/
 | **IAM** | Least-priv instance role; no static keys anywhere | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
 | **S3** | Private strategy overlay plus manual-watchlist persistence | core |
-| **CloudWatch** | EC2 status alarm, Lambda logs, and a reserved engine log group | core |
+| **CloudWatch** | EC2 status alarm, Lambda logs, and 14-day structured application logs | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |
 | **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | free |
 | **Resource Groups** | One console view of every `Project`-tagged resource | free |
 
 No RDS (no managed Postgres) — local disk holds `candidates.csv`, `alerts.log`,
-and a working copy of the S3-backed manual watchlist. Engine stdout/stderr stays in journald. The
-Terraform engine log group exists, but no CloudWatch agent currently ships the
-journal into it.
+and a working copy of the S3-backed manual watchlist. Engine stdout/stderr stays
+in journald; bounded JSON files are also shipped by the CloudWatch agent.
 
 ## First-time setup
 
@@ -139,6 +138,16 @@ sudo journalctl -u market-sentinel.service -n 200 --no-pager
 sudo journalctl -u market-sentinel-prescreen.service -n 200 --no-pager
 ```
 
+CloudWatch Logs Insights can search both production streams without an SSM
+session. Select `/market-sentinel/engine` and, for example, run:
+
+```text
+fields @timestamp, event, symbol, direction, close, bb, rsi, bb_pass, rsi_pass
+| filter event = "rule_evaluation" and symbol = "AMC"
+| sort @timestamp desc
+| limit 200
+```
+
 Useful service operations on the box:
 
 ```bash
@@ -147,10 +156,9 @@ sudo systemctl start market-sentinel-prescreen.service
 sudo systemctl restart market-sentinel-config.service
 ```
 
-The AWS console has Lambda logs and the EC2 status alarm. It does **not**
-currently have engine journal entries; use SSM + `journalctl` until a CloudWatch
-agent is intentionally added. `terraform output -raw console_overview` opens the
-tag-based resource overview.
+The AWS console has Lambda logs, structured engine/pre-screen logs, and the EC2
+status alarm. `terraform output -raw console_overview` opens the tag-based
+resource overview.
 
 Pushes to `main` run Black and pytest in GitHub Actions, then assume the deploy
 role through OIDC and invoke `infra/scripts/redeploy.sh` through SSM. That script

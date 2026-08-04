@@ -31,6 +31,9 @@ fi
 # code edits, but new dependencies need pip to resolve them).
 sudo -u "$APP_USER" "$VENV/bin/pip" install -e "$APP_DIR" -q
 
+# Reapply observability config so agent changes deploy without replacing EC2.
+"$APP_DIR/infra/scripts/configure-cloudwatch.sh"
+
 # Reinstall units (they may have changed) and restart. Only *.service — the
 # schedule lives in EventBridge, not an on-box timer.
 install -m 0644 "$APP_DIR"/infra/systemd/*.service /etc/systemd/system/

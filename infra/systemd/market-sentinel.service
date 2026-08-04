@@ -19,6 +19,7 @@ User=msuser
 WorkingDirectory=/opt/market-sentinel/app
 EnvironmentFile=/etc/market-sentinel/engine.env
 Environment=PYTHONUNBUFFERED=1
+Environment=MARKET_SENTINEL_LOG_DIR=/var/log/market-sentinel
 ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine --live --headless
 Restart=always
 RestartSec=10

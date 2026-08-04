@@ -7,10 +7,14 @@ settings_local.py. Stateless: the engine owns per-symbol history and the
 arm/confirm/cooldown state.
 """
 
+import logging
+
 from .. import settings
 from ..indicators import bollinger_bands, rsi
 from ..interfaces import AlertRule
 from ..models import Alert, Bar
+
+_LOG = logging.getLogger("alertengine.decision")
 
 
 class BBRSIExitRule(AlertRule):
@@ -40,7 +44,20 @@ class BBRSIExitRule(AlertRule):
         r = rsi(closes, self.rsi_period)
         last = bars[-1]
 
-        if last.close > upper and r > self.rsi_threshold:
+        bb_pass = last.close > upper
+        rsi_pass = r > self.rsi_threshold
+        _LOG.info(
+            "event=rule_evaluation symbol=%s direction=sell close=%.4f "
+            "bb=%.4f rsi=%.2f bb_pass=%s rsi_pass=%s bar_time=%s",
+            symbol,
+            last.close,
+            upper,
+            r,
+            bb_pass,
+            rsi_pass,
+            last.timestamp.isoformat(),
+        )
+        if bb_pass and rsi_pass:
             return Alert(
                 symbol=symbol,
                 timestamp=last.timestamp,

@@ -18,6 +18,7 @@ Screener/DataFeed get constructed here — the engine is untouched.
 """
 
 import asyncio
+import logging
 import sys
 
 from dotenv import load_dotenv
@@ -25,6 +26,7 @@ from dotenv import load_dotenv
 from . import settings
 from .engine import AlertEngine
 from .gate import ApprovalGate
+from .logging_config import configure_logging
 from .notifiers.console_notifier import ConsoleNotifier
 from .repl import run
 from .rules.bb_rsi_exit_rule import BBRSIExitRule
@@ -66,10 +68,15 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
 
 
 if __name__ == "__main__":
+    configure_logging("engine")
+    log = logging.getLogger("alertengine.main")
     args = sys.argv[1:]
     live = "--live" in args
     replay = "--replay" in args
     headless = "--headless" in args  # no console (server/systemd); auto-watch
+    log.info(
+        "event=process_start live=%s replay=%s headless=%s", live, replay, headless
+    )
     try:
         engine = build_engine(live=live, replay=replay)
     except RuntimeError as e:
@@ -103,4 +110,4 @@ if __name__ == "__main__":
             # modes; mock mode stays a clean sandbox.
             asyncio.run(run(engine, auto_approve=live or replay))
     except KeyboardInterrupt:
-        pass
+        log.info("event=process_stop reason=keyboard_interrupt")

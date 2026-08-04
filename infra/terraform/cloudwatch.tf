@@ -1,7 +1,5 @@
-# Reserved log group for future engine journal shipping. No CloudWatch agent is
-# installed today; engine logs remain in journald and are inspected through SSM.
-# The instance role is already scoped to this group if shipping is added later.
-#
+# Engine and pre-screen JSON logs are shipped here by the EC2 CloudWatch agent.
+# Explicit retention prevents silent, permanent storage growth.
 resource "aws_cloudwatch_log_group" "engine" {
   name              = "/${local.name}/engine"
   retention_in_days = 14

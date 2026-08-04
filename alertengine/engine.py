@@ -13,6 +13,7 @@ direction differ.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -23,6 +24,8 @@ from .alert_window import AlertWindow
 from .gate import ApprovalGate
 from .interfaces import AlertRule, ConfirmationRule, DataFeed, Notifier, Screener
 from .models import Alert, Bar, Candidate
+
+_LOG = logging.getLogger("alertengine.engine")
 
 
 class Phase(Enum):
@@ -160,6 +163,7 @@ class AlertEngine:
         # watchlist changes. Never carry a half-built bucket across subscriptions.
         self._agg = BarAggregator()
         self.watching = True
+        _LOG.info("event=watch_start symbols=%s", ",".join(symbols))
         try:
             await self._backfill(symbols)
             async for bar in self.feed.stream_bars(symbols):
@@ -171,6 +175,7 @@ class AlertEngine:
                 await self._on_2min_bar(completed)
         finally:
             self.watching = False
+            _LOG.info("event=watch_stop symbols=%s", ",".join(symbols))
 
     async def _backfill(self, symbols: list[str]) -> None:
         """Seed per-symbol 2-min history from recent REST bars so the rule has a
@@ -182,9 +187,11 @@ class AlertEngine:
         """
         provider = getattr(self.feed, "backfill_bars", None)
         if provider is None:
+            _LOG.info("event=backfill_skip reason=unsupported")
             return
         one_min_bars = await asyncio.to_thread(provider, symbols)
         if not one_min_bars:
+            _LOG.warning("event=backfill_empty symbols=%s", ",".join(symbols))
             return
         # Fold 1-min -> 2-min through a throwaway aggregator so the live
         # aggregator (self._agg) starts clean: no partial historical bucket can
@@ -204,7 +211,7 @@ class AlertEngine:
         if seeded:
             total = sum(seeded.values())
             detail = ", ".join(f"{s}:{n}" for s, n in sorted(seeded.items()))
-            print(f"backfill: seeded {total} 2-min bars for warm-up ({detail})")
+            _LOG.info("event=backfill_complete total=%d detail=%s", total, detail)
 
     def _merge_seed_history(self, symbol: str, bars: list[Bar]) -> None:
         """Merge warm-up bars without duplicating or time-reversing history.
@@ -236,6 +243,16 @@ class AlertEngine:
         # machine outside the configured local hours. Resetting volatile machine
         # state prevents a prior window's setup from confirming in a later one.
         if not self._alert_window.contains(bar.timestamp):
+            for machine in state.machines():
+                if machine.phase is not Phase.WAITING:
+                    _LOG.info(
+                        "event=state_reset symbol=%s direction=%s "
+                        "reason=outside_window previous_phase=%s bar_time=%s",
+                        bar.symbol,
+                        "buy" if machine.long else "sell",
+                        machine.phase.value,
+                        bar.timestamp.isoformat(),
+                    )
             self._reset_machines(state)
             return
 
@@ -268,7 +285,7 @@ class AlertEngine:
         elif machine.phase is Phase.ARMED:
             await self._advance_armed(state, machine, bar)
         elif machine.phase is Phase.COOLDOWN:
-            self._advance_cooldown(machine, signal)
+            self._advance_cooldown(machine, signal, bar.symbol)
 
     async def _arm(self, machine: _DirectionMachine, bar: Bar, setup: Alert) -> None:
         """WAITING -> ARMED: fire a WATCH alert and start the two-close
@@ -276,6 +293,13 @@ class AlertEngine:
         setup.kind = machine.watch_kind
         self._enrich(setup, bar.symbol)
         await self.notifier.send(setup)
+        _LOG.info(
+            "event=armed symbol=%s direction=%s close=%.4f bar_time=%s",
+            bar.symbol,
+            "buy" if machine.long else "sell",
+            bar.close,
+            bar.timestamp.isoformat(),
+        )
         machine.phase = Phase.ARMED
         machine.consecutive = 0
         machine.bars_since_arm = 0
@@ -288,6 +312,18 @@ class AlertEngine:
             machine.consecutive += 1
         else:  # a non-confirming close breaks the streak (must be *consecutive*)
             machine.consecutive = 0
+        _LOG.info(
+            "event=confirmation_progress symbol=%s direction=%s "
+            "confirming_close=%s consecutive=%d bars_since_arm=%d "
+            "close=%.4f bar_time=%s",
+            bar.symbol,
+            "buy" if machine.long else "sell",
+            machine.is_confirm_close(bar),
+            machine.consecutive,
+            machine.bars_since_arm,
+            bar.close,
+            bar.timestamp.isoformat(),
+        )
         # Success beats timeout: check the confirmation before the clock.
         if machine.consecutive >= machine.confirm_bars:
             context: dict[str, float] = {}
@@ -297,11 +333,18 @@ class AlertEngine:
                     context.update(result)
                     await self._fire(machine, bar, context)
                     return
+                _LOG.info(
+                    "event=confirmation_blocked symbol=%s direction=buy "
+                    "reason=macd_or_ema close=%.4f bar_time=%s",
+                    bar.symbol,
+                    bar.close,
+                    bar.timestamp.isoformat(),
+                )
             else:
                 await self._fire(machine, bar, context)
                 return
         if machine.bars_since_arm >= machine.arm_timeout_bars:
-            self._timeout(state, machine)
+            self._timeout(state, machine, bar.symbol)
 
     async def _fire(
         self,
@@ -331,10 +374,21 @@ class AlertEngine:
         )
         self._enrich(alert, bar.symbol)
         await self.notifier.send(alert)
+        _LOG.info(
+            "event=alert_fired symbol=%s direction=%s close=%.4f "
+            "bar_time=%s context=%s",
+            bar.symbol,
+            machine.fire_kind,
+            bar.close,
+            bar.timestamp.isoformat(),
+            alert.context,
+        )
         machine.phase = Phase.COOLDOWN
         machine.bars_since_alert = 0
 
-    def _timeout(self, state: _SymbolState, machine: _DirectionMachine) -> None:
+    def _timeout(
+        self, state: _SymbolState, machine: _DirectionMachine, symbol: str
+    ) -> None:
         """ARMED -> WAITING: no confirmation in the window. Reset this machine.
 
         Bar history is shared across a symbol's machines, so it's only dropped
@@ -343,6 +397,12 @@ class AlertEngine:
         wired there is no peer, so history is always dropped (the original
         single-machine behavior).
         """
+        _LOG.info(
+            "event=confirmation_timeout symbol=%s direction=%s bars_since_arm=%d",
+            symbol,
+            "buy" if machine.long else "sell",
+            machine.bars_since_arm,
+        )
         machine.reset()
         if all(
             other is machine or other.phase is Phase.WAITING
@@ -350,12 +410,20 @@ class AlertEngine:
         ):
             state.history.clear()
 
-    def _advance_cooldown(self, machine: _DirectionMachine, signal: bool) -> None:
+    def _advance_cooldown(
+        self, machine: _DirectionMachine, signal: bool, symbol: str
+    ) -> None:
         """COOLDOWN -> WAITING once the setup has cleared AND a min floor of bars
         has elapsed, so we never re-fire on the same continuous setup episode.
         """
         machine.bars_since_alert += 1
         if not signal and machine.bars_since_alert >= machine.cooldown_bars:
+            _LOG.info(
+                "event=cooldown_complete symbol=%s direction=%s bars_since_alert=%d",
+                symbol,
+                "buy" if machine.long else "sell",
+                machine.bars_since_alert,
+            )
             machine.reset()
 
     def _enrich(self, alert: Alert, symbol: str) -> None:

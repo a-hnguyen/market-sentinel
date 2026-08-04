@@ -12,6 +12,7 @@ Type=oneshot
 User=msuser
 WorkingDirectory=/opt/market-sentinel/app
 EnvironmentFile=/etc/market-sentinel/engine.env
+Environment=MARKET_SENTINEL_LOG_DIR=/var/log/market-sentinel
 # A network/provider regression must fail the scan, never monopolize the box.
 TimeoutStartSec=5min
 ExecStart=/opt/market-sentinel/venv/bin/python -m alertengine.prescreen --notify

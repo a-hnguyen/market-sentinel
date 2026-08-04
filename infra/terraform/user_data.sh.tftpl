@@ -61,6 +61,9 @@ chmod 600 /etc/market-sentinel/deploy.env
 # Ensure the pre-screen's watchlist dir exists before the overlay sync populates it.
 sudo -u "$APP_USER" mkdir -p "$APP_DIR/alertengine/data"
 
+# Ship the application's rotating JSON logs to its retained CloudWatch group.
+"$APP_DIR/infra/scripts/configure-cloudwatch.sh"
+
 # Install systemd units from the repo and start everything. The config unit runs
 # first (fetch secrets + sync overlay); the engine depends on it. The pre-screen
 # is a oneshot unit with no timer — EventBridge triggers it via SSM (see
