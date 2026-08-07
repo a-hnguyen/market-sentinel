@@ -55,6 +55,32 @@ def test_alert_embed_contains_actionable_context():
     assert {field.name for field in embed.fields} == {"Close", "Rsi"}
 
 
+def test_premarket_alert_embed_is_clearly_labelled():
+    alert = Alert(
+        symbol="AAPL",
+        # 13:29 UTC in July is 06:29 PDT.
+        timestamp=datetime(2026, 7, 13, 13, 29, tzinfo=timezone.utc),
+        rule="bb_rsi_buy",
+        message="BUY AAPL",
+        kind="buy",
+    )
+
+    assert DiscordBot.alert_embed(alert).title == "PREMARKET · BUY ALERT — AAPL"
+
+
+def test_market_open_alert_embed_is_not_labelled_premarket():
+    alert = Alert(
+        symbol="AAPL",
+        # 13:30 UTC in July is exactly 06:30 PDT.
+        timestamp=datetime(2026, 7, 13, 13, 30, tzinfo=timezone.utc),
+        rule="bb_rsi_buy",
+        message="BUY AAPL",
+        kind="buy",
+    )
+
+    assert DiscordBot.alert_embed(alert).title == "BUY ALERT — AAPL"
+
+
 def test_prescreen_job_runs_in_subprocess_and_reports_results(monkeypatch):
     messages = []
 

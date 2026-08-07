@@ -9,6 +9,7 @@ from datetime import timezone
 from zoneinfo import ZoneInfo
 
 from ..interfaces import Notifier
+from ..market_session import in_premarket
 from ..models import Alert
 
 # Display alert times in US Pacific. ZoneInfo handles PST/PDT automatically, so
@@ -65,6 +66,9 @@ class ConsoleNotifier(Notifier):
             "sell": "SELL ",
         }.get(alert.kind, "ALERT")
         # Date included because replay bars span multiple days; %Z -> PST/PDT.
-        line = f"[{tag} {local:%Y-%m-%d %H:%M %Z}]  {alert.symbol:<6}  {body}"
+        session = "PREMARKET " if in_premarket(alert.timestamp) else ""
+        line = (
+            f"[{session}{tag} {local:%Y-%m-%d %H:%M %Z}]  " f"{alert.symbol:<6}  {body}"
+        )
         print(line)
         self._log.info("%s %s %s", alert.symbol, alert.rule, alert.context)

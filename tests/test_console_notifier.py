@@ -55,6 +55,15 @@ def test_buy_is_labelled_buy(tmp_path, capsys):
     assert "2 green 2-min closes confirmed" in out  # fallback message shown
 
 
+def test_premarket_alert_is_labelled(tmp_path, capsys):
+    alert = _watch_alert()
+    alert.timestamp = datetime(2026, 7, 2, 13, 29, tzinfo=timezone.utc)
+
+    _send(ConsoleNotifier(logfile=str(tmp_path / "a.log")), alert)
+
+    assert "[PREMARKET WATCH 2026-07-02 06:29 PDT]" in capsys.readouterr().out
+
+
 def test_unknown_kind_falls_back_to_alert_label(tmp_path, capsys):
     a = _watch_alert()
     a.kind = "something-else"

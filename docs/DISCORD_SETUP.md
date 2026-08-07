@@ -93,3 +93,5 @@ Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 - `/status` includes watcher state, per-symbol state, and whether the configured
   Pacific alert window is currently open. It also separates automatic
   pre-screen symbols from explicit manual `/watch` symbols.
+- Alerts based on bars before the 6:30 AM Pacific regular-session open are
+  prefixed `PREMARKET` so extended-hours signals are unambiguous.

@@ -125,6 +125,8 @@ This separation is deliberate. For example, a websocket failure escapes
    - Equal endpoints mean always open; a start after the end crosses midnight.
 5. Inside the window, the buy and optional sell rules evaluate the same shared
    history.
+   - Alerts based on bars before the 06:30 Pacific regular-session open are
+     labelled `PREMARKET` in Discord and console output.
 6. A setup alert arms its direction-specific state machine. The arming bar does
    not count toward confirmation.
 7. Two consecutive green closes confirm the public BUY pattern; two consecutive

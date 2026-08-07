@@ -20,6 +20,7 @@ from discord import app_commands
 from . import settings
 from .engine import AlertEngine
 from .interfaces import Notifier
+from .market_session import in_premarket
 from .models import Alert, Candidate
 from .notifiers.multi_notifier import MultiNotifier
 from .prescreen.reporting import load_report
@@ -366,8 +367,9 @@ class DiscordBot(discord.Client, Notifier):
             "sell_watch": "SELL SETUP ARMED",
             "sell": "SELL ALERT",
         }
+        session = "PREMARKET · " if in_premarket(alert.timestamp) else ""
         embed = discord.Embed(
-            title=f"{labels.get(kind, 'MARKET ALERT')} — {alert.symbol}",
+            title=f"{session}{labels.get(kind, 'MARKET ALERT')} — {alert.symbol}",
             description=alert.message,
             color=colors.get(kind, 0x3498DB),
         )
