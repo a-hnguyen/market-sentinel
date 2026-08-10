@@ -4,22 +4,27 @@ An asynchronous stock-alert service that watches approved symbols over Alpaca
 market data and sends setup/confirmation alerts to a private Discord channel.
 It is an alerting tool, not an auto-trader: it never submits orders.
 
+An optional second watcher polls Robinhood's authenticated MCP endpoint for
+24/5 one-minute bars, constructs two-minute candles locally, and applies the
+same alert pipeline to a separately managed overnight watchlist. Its adapter
+exposes historical reads only; no order tool is available to the application.
+
 ## How it works
 
 ```text
 Discord or local REPL
         │
-        ▼
-approved watchlist ─▶ Alpaca 1-min bars ─▶ 2-min aggregation
-                                                │
-                                                ▼
-                              alert window + BB/RSI rules
-                                                │
-                                                ▼
-                                  buy/sell confirmation state
-                                                │
-                                                ▼
-                                      console + Discord alerts
+        ├─ regular watchlist ─▶ Alpaca websocket ───────┐
+        │                                               │
+        └─ overnight watchlist ─▶ Robinhood MCP poll ───┤
+                                                        ▼
+                                           2-min aggregation
+                                                        │
+                                   alert window + BB/RSI rules
+                                                        │
+                                      buy/sell confirmation state
+                                                        │
+                                           console + Discord alerts
 ```
 
 A separate post-close pre-screen evaluates a curated watchlist over
@@ -75,6 +80,7 @@ Replay still enforces the configured alert window against historical bar times.
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Best starting point for current runtime and AWS architecture |
 | [docs/DISCORD_SETUP.md](docs/DISCORD_SETUP.md) | Bot creation, authorization, commands, and SSM configuration |
+| [docs/ROBINHOOD_WATCHER.md](docs/ROBINHOOD_WATCHER.md) | Optional read-only overnight watcher, OAuth, and operations |
 | [docs/SETUP_WINDOWS.md](docs/SETUP_WINDOWS.md) | Optional Windows local-development walkthrough |
 | [infra/README.md](infra/README.md) | Terraform deployment, schedule, operations, and logs |
 | `CLAUDE.md` | Coding-agent constraints and repository conventions |
@@ -89,5 +95,7 @@ Replay still enforces the configured alert window against historical bar times.
   Logs and remain locally available through `journalctl`.
 - The manual `/watch` list is backed up to the private S3 overlay and restored
   after EC2 replacement. Candidate CSVs and logs remain single-box state.
+- The optional Robinhood watcher keeps its OAuth state and `/penny-watch` list
+  in separate git-ignored files backed up to the same private S3 overlay.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution
   are not part of the current system.

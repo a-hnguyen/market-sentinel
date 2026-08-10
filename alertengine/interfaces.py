@@ -1,4 +1,4 @@
-"""The four swappable seams: Screener, DataFeed, AlertRule, Notifier.
+"""The swappable seams: screening, market data, rules, and notification.
 
 These abstract boundaries are the whole point of the architecture: they let the
 data source, alert rule, and notifier be replaced later (web dashboard, IBKR,
@@ -6,6 +6,7 @@ etc.) without touching the engine.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import AsyncIterator
 
 from .models import Alert, Bar, Candidate
@@ -21,6 +22,21 @@ class DataFeed(ABC):
     @abstractmethod
     async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]:
         """Yield 1-min bars for the given symbols as they arrive."""
+
+
+class HistoricalBarFeed(ABC):
+    """Read-only, range-based market-data source.
+
+    Unlike ``DataFeed``, this seam does not imply a websocket. It supports
+    polling providers such as Robinhood MCP while keeping transport and OAuth
+    details outside strategy code.
+    """
+
+    @abstractmethod
+    async def fetch_bars(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> list[Bar]:
+        """Return provider-native 1-minute bars in chronological order."""
 
 
 class AlertRule(ABC):

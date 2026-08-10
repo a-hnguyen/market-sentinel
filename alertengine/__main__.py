@@ -19,6 +19,7 @@ Screener/DataFeed get constructed here — the engine is untouched.
 
 import asyncio
 import logging
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -67,6 +68,49 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
     )
 
 
+def build_penny_engine() -> AlertEngine | None:
+    """Build the optional read-only Robinhood overnight watcher."""
+    if not settings.PENNY_WATCHER_ENABLED:
+        return None
+
+    from .feeds.historical_polling_feed import HistoricalPollingFeed
+    from .feeds.robinhood_feed import RobinhoodHistoricalFeed
+    from .feeds.robinhood_mcp_transport import (
+        FileTokenStorage,
+        RobinhoodMCPTransport,
+    )
+    from .interfaces import Screener
+
+    class EmptyScreener(Screener):
+        async def get_candidates(self):
+            return []
+
+    storage = FileTokenStorage(
+        settings.ROBINHOOD_OAUTH_PATH,
+        os.environ.get("ROBINHOOD_OAUTH_S3_URI", ""),
+    )
+    source = RobinhoodHistoricalFeed(
+        RobinhoodMCPTransport(storage, server_url=settings.ROBINHOOD_MCP_URL)
+    )
+    feed = HistoricalPollingFeed(
+        source,
+        poll_seconds=settings.ROBINHOOD_POLL_SECONDS,
+        backfill_minutes=settings.ROBINHOOD_BACKFILL_MINUTES,
+    )
+    return AlertEngine(
+        screener=EmptyScreener(),
+        feed=feed,
+        rule=BBRSIRule(),
+        exit_rule=BBRSIExitRule(),
+        notifier=ConsoleNotifier(),
+        gate=ApprovalGate(),
+        window_start=settings.PENNY_WINDOW_START,
+        window_end=settings.PENNY_WINDOW_END,
+        alert_timezone=settings.ALERT_TIMEZONE,
+        buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
+    )
+
+
 if __name__ == "__main__":
     configure_logging("engine")
     log = logging.getLogger("alertengine.main")
@@ -104,7 +148,14 @@ if __name__ == "__main__":
             # Server/systemd: Discord is the remote REPL and alert channel.
             from .discord_bot import run_discord
 
-            asyncio.run(run_discord(engine, auto_approve=live or replay))
+            penny_engine = build_penny_engine()
+            asyncio.run(
+                run_discord(
+                    engine,
+                    auto_approve=live or replay,
+                    penny_engine=penny_engine,
+                )
+            )
         else:
             # Auto-approve the pre-screen's survivors on startup only in real-data
             # modes; mock mode stays a clean sandbox.

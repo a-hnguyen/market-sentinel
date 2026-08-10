@@ -67,10 +67,17 @@ class ScriptedConfirmationRule(ConfirmationRule):
         return next(self._results)
 
 
-def _bar(i, green, symbol="ZZ"):
+def _bar(i, green, symbol="ZZ", *, interpolated=False):
     o, c = 100.0, (101.0 if green else 99.0)
     return Bar(
-        symbol, BASE + timedelta(minutes=2 * i), o, max(o, c), min(o, c), c, 1000.0
+        symbol,
+        BASE + timedelta(minutes=2 * i),
+        o,
+        max(o, c),
+        min(o, c),
+        c,
+        1000.0,
+        interpolated=interpolated,
     )
 
 
@@ -157,6 +164,26 @@ def test_red_breaks_the_green_streak():
     )
     assert _kinds(n) == ["watch", "buy"]
     assert n.alerts[1].timestamp == BASE + timedelta(minutes=2 * 4)
+
+
+def test_interpolated_green_body_cannot_confirm_buy():
+    n = _Rec()
+    e = _engine(ScriptedRule(hot={0}), n)
+    asyncio.run(
+        _feed(
+            e,
+            [
+                _bar(0, False),
+                _bar(1, True),
+                _bar(2, True, interpolated=True),
+                _bar(3, True),
+                _bar(4, True),
+            ],
+        )
+    )
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert n.alerts[-1].timestamp == BASE + timedelta(minutes=8)
 
 
 def test_arm_bar_green_does_not_count():

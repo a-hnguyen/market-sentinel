@@ -47,10 +47,10 @@ infra/
 
 | Service | Role | Kept minimal? |
 |---|---|---|
-| **EC2** | Always-on box running the engine (persistent Alpaca websocket) | core |
+| **EC2** | Always-on box running the Alpaca websocket, Robinhood poller, and Discord bot | core |
 | **IAM** | Least-priv instance role; no static keys anywhere | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
-| **S3** | Private strategy overlay plus manual-watchlist persistence | core |
+| **S3** | Private strategy overlay, both manual watchlists, and Robinhood OAuth persistence | core |
 | **CloudWatch** | EC2 status alarm, Lambda logs, and 14-day structured application logs | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |
@@ -94,6 +94,9 @@ aws ssm put-parameter --name /market-sentinel/github_token      --type SecureStr
 BUCKET=$(terraform output -raw overlay_bucket)
 aws s3 cp ../../alertengine/settings_local.py        "s3://$BUCKET/private/settings_local.py"
 aws s3 cp ../../alertengine/data/watchlist.xls        "s3://$BUCKET/private/watchlist.xls"
+# Optional read-only Robinhood watcher, after local OAuth bootstrap:
+aws s3 cp ../../alertengine/data/robinhood_oauth.json \
+  "s3://$BUCKET/private/runtime/robinhood_oauth.json"
 # Optional only after a private rule package exists:
 # aws s3 cp --recursive ../../alertengine/rules/_private "s3://$BUCKET/private/rules/_private"
 
@@ -178,7 +181,9 @@ set a billing budget instead of relying on a fixed number in this document.
 - **No inbound ports.** Shell access is SSM Session Manager only.
 - **No static AWS credentials.** The box uses an instance role; CI uses OIDC.
   There is no IAM user with long-lived AWS keys. Third-party API tokens remain
-  encrypted in Parameter Store and are scoped by the instance-role policy.
+  in Parameter Store or the private S3 overlay and are scoped by the
+  instance-role policy. The Robinhood application adapter exposes historical
+  reads only and has no order-call escape hatch.
 - **Strategy IP never in git.** The overlay bucket is fully private and is how
   the real strategy reaches the box; a public `git clone` is intentionally
   incomplete.

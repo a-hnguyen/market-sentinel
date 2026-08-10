@@ -20,7 +20,16 @@ _SYMBOL = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
 
 
 class WatchController:
-    def __init__(self, engine: AlertEngine, retry_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        engine: AlertEngine,
+        retry_seconds: float = 10.0,
+        *,
+        manual_watchlist_path: str | None = None,
+        manual_s3_uri: str | None = None,
+        task_name: str = "market-watch",
+        log_name: str = "alertengine.watch",
+    ) -> None:
         self.engine = engine
         self.retry_seconds = retry_seconds
         self._task: asyncio.Task | None = None
@@ -28,11 +37,19 @@ class WatchController:
         self._enabled = False
         self._manual: set[str] = set()
         self._automatic: set[str] = set()
-        self._manual_s3_uri = os.environ.get("MANUAL_WATCHLIST_S3_URI", "").strip()
+        self._manual_path = Path(
+            manual_watchlist_path or settings.MANUAL_WATCHLIST_PATH
+        )
+        self._manual_s3_uri = (
+            os.environ.get("MANUAL_WATCHLIST_S3_URI", "")
+            if manual_s3_uri is None
+            else manual_s3_uri
+        ).strip()
+        self._task_name = task_name
         self._aws_region = os.environ.get("AWS_REGION", "").strip()
         self._persistence_error: str | None = None
         self._active_symbols: tuple[str, ...] = ()
-        self._log = logging.getLogger("alertengine.watch")
+        self._log = logging.getLogger(log_name)
 
     @property
     def running(self) -> bool:
@@ -80,7 +97,7 @@ class WatchController:
         return list(dict.fromkeys(valid)), list(dict.fromkeys(invalid))
 
     def load_manual(self) -> list[str]:
-        path = Path(settings.MANUAL_WATCHLIST_PATH)
+        path = self._manual_path
         if not path.exists():
             return []
         symbols = []
@@ -108,7 +125,7 @@ class WatchController:
         return self.automatic_symbols
 
     async def _save_manual(self) -> None:
-        path = Path(settings.MANUAL_WATCHLIST_PATH)
+        path = self._manual_path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(f"{path.suffix}.tmp")
         temporary.write_text(
@@ -155,7 +172,7 @@ class WatchController:
             if self.running:
                 return symbols
             self._enabled = True
-            self._task = asyncio.create_task(self._supervise(), name="market-watch")
+            self._task = asyncio.create_task(self._supervise(), name=self._task_name)
             self._log.info("event=watch_enabled symbols=%s", ",".join(symbols))
             return symbols
 
@@ -253,7 +270,7 @@ class WatchController:
 
     async def _restart_task(self) -> None:
         await self._cancel_task()
-        self._task = asyncio.create_task(self._supervise(), name="market-watch")
+        self._task = asyncio.create_task(self._supervise(), name=self._task_name)
 
     async def _cancel_task(self) -> None:
         if self._task is None:

@@ -7,7 +7,15 @@ from alertengine.models import Bar
 
 
 def bar(
-    sym: str, minute: int, o: float, h: float, low: float, c: float, v: float
+    sym: str,
+    minute: int,
+    o: float,
+    h: float,
+    low: float,
+    c: float,
+    v: float,
+    *,
+    interpolated: bool = False,
 ) -> Bar:
     """Build a 1-min bar at 2026-01-02 09:<minute>."""
     return Bar(
@@ -18,6 +26,8 @@ def bar(
         low=low,
         close=c,
         volume=v,
+        interpolated=interpolated,
+        session="overnight",
     )
 
 
@@ -119,3 +129,93 @@ def test_long_run_emits_one_bar_per_bucket():
         datetime(2026, 1, 2, 9, 32),
         datetime(2026, 1, 2, 9, 34),
     ]
+
+
+def test_real_minute_replaces_leading_interpolated_gap_fill():
+    agg = BarAggregator()
+    agg.add(
+        bar(
+            "AMC",
+            30,
+            o=2.62,
+            h=2.62,
+            low=2.62,
+            c=2.62,
+            v=0,
+            interpolated=True,
+        )
+    )
+    agg.add(bar("AMC", 31, o=2.58, h=2.58, low=2.58, c=2.58, v=40))
+
+    out = agg.flush("AMC")
+    assert out is not None
+    assert (out.open, out.high, out.low, out.close, out.volume) == (
+        2.58,
+        2.58,
+        2.58,
+        2.58,
+        40,
+    )
+    assert out.interpolated is False
+    assert out.session == "overnight"
+
+
+def test_trailing_interpolated_minute_does_not_change_real_ohlcv():
+    agg = BarAggregator()
+    agg.add(bar("AMC", 30, o=2.57, h=2.58, low=2.56, c=2.57, v=25))
+    agg.add(
+        bar(
+            "AMC",
+            31,
+            o=2.57,
+            h=2.57,
+            low=2.57,
+            c=2.57,
+            v=0,
+            interpolated=True,
+        )
+    )
+
+    out = agg.flush("AMC")
+    assert out is not None
+    assert (out.open, out.high, out.low, out.close, out.volume) == (
+        2.57,
+        2.58,
+        2.56,
+        2.57,
+        25,
+    )
+    assert out.interpolated is False
+
+
+def test_fully_interpolated_bucket_remains_marked_synthetic():
+    agg = BarAggregator()
+    agg.add(
+        bar(
+            "AMC",
+            30,
+            o=2.59,
+            h=2.59,
+            low=2.59,
+            c=2.59,
+            v=0,
+            interpolated=True,
+        )
+    )
+    agg.add(
+        bar(
+            "AMC",
+            31,
+            o=2.59,
+            h=2.59,
+            low=2.59,
+            c=2.59,
+            v=0,
+            interpolated=True,
+        )
+    )
+
+    out = agg.flush("AMC")
+    assert out is not None
+    assert out.interpolated is True
+    assert out.volume == 0

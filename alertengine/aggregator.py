@@ -13,6 +13,9 @@ Design:
   arrives, so we never wait indefinitely for a second bar that may not come.
 - Missing-minute quirk (real on IEX): a quiet minute may produce no 1-min bar,
   leaving a bucket with a single bar. We still emit it rather than stall.
+- Historical gap fills: provider-marked interpolated minutes preserve clock
+  alignment, but real minutes exclusively determine a mixed bucket's OHLCV. A
+  bucket is marked interpolated only when it contains no real trades at all.
 - State is per-symbol; symbols are independent.
 
 Assumes bars arrive in non-decreasing timestamp order per symbol (as a real feed
@@ -41,12 +44,34 @@ class _Bucket:
     low: float
     close: float
     volume: float
+    has_real_trade: bool
+    session: str | None
 
     def merge(self, bar: Bar) -> None:
+        if not bar.interpolated and not self.has_real_trade:
+            # A provider may emit a carry-forward minute before the first real
+            # trade in this bucket. Do not let that synthetic price fabricate
+            # the two-minute candle's open or range.
+            self.open = bar.open
+            self.high = bar.high
+            self.low = bar.low
+            self.close = bar.close
+            self.volume = bar.volume
+            self.has_real_trade = True
+            self.session = bar.session or self.session
+            return
+
+        if bar.interpolated and self.has_real_trade:
+            # Gap fills carry no new market information. Once a bucket has a
+            # real trade, its OHLCV must be derived from real minutes only.
+            return
+
         self.high = max(self.high, bar.high)
         self.low = min(self.low, bar.low)
         self.close = bar.close  # last 1-min close in the bucket
         self.volume += bar.volume
+        self.has_real_trade = self.has_real_trade or not bar.interpolated
+        self.session = bar.session or self.session
 
     def to_bar(self) -> Bar:
         return Bar(
@@ -57,6 +82,8 @@ class _Bucket:
             low=self.low,
             close=self.close,
             volume=self.volume,
+            interpolated=not self.has_real_trade,
+            session=self.session,
         )
 
 
@@ -87,6 +114,8 @@ class BarAggregator:
             low=bar.low,
             close=bar.close,
             volume=bar.volume,
+            has_real_trade=not bar.interpolated,
+            session=bar.session,
         )
         return emitted
 

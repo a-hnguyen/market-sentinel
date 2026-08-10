@@ -44,6 +44,15 @@ class BBRSIExitRule(AlertRule):
         r = rsi(closes, self.rsi_period)
         last = bars[-1]
 
+        if last.interpolated:
+            _LOG.info(
+                "event=rule_evaluation symbol=%s direction=sell "
+                "reason=interpolated_skip bar_time=%s",
+                symbol,
+                last.timestamp.isoformat(),
+            )
+            return None
+
         bb_pass = last.close > upper
         rsi_pass = r > self.rsi_threshold
         _LOG.info(

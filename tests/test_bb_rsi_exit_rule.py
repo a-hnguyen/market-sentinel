@@ -49,3 +49,9 @@ def test_no_fire_on_flat_series():
 def test_none_when_insufficient_history():
     rule = BBRSIExitRule()
     assert rule.evaluate("ZZ", _bars([10.0] * 5)) is None
+
+
+def test_interpolated_bar_never_arms_sell():
+    bars = _bars([10.0] * 19 + [12.0])
+    bars[-1].interpolated = True
+    assert BBRSIExitRule().evaluate("ZZ", bars) is None

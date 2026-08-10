@@ -17,10 +17,12 @@ design.
   must be **ABSENT, not obfuscated**. `.gitignore` must keep covering `.env`,
   `rules/_private/`, `settings_local.py`, secrets, logs, private notes, and
   reference PDFs before any commit. Treat `.gitignore` as the authoritative list.
-- **yfinance is screening ONLY, never the trade/data path.** Bars come from the
-  DataFeed (mock/replay locally, Alpaca live). Keep the two sources separate.
-- **The four seams are load-bearing** — `Screener`, `DataFeed`, `AlertRule`,
-  `Notifier` (`alertengine/interfaces.py`) plus the `ApprovalGate`. Don't merge
+- **yfinance is screening ONLY, never the trade/data path.** Intraday bars come
+  from Alpaca; the optional overnight watcher reads Robinhood 24/5 historical
+  bars through its allowlisted MCP adapter. Keep screening and bar sources separate.
+- **The adapter seams are load-bearing** — `Screener`, `DataFeed`,
+  `HistoricalBarFeed`, `AlertRule`, and `Notifier`
+  (`alertengine/interfaces.py`) plus the `ApprovalGate`. Don't merge
   or rename them to "simplify"; swapping mock→real (Alpaca/yfinance) and adding a
   dashboard/IBKR later depends on these boundaries staying intact.
 - `ConfirmationRule` is an optional post-pattern BUY gate. The tracked engine
@@ -50,8 +52,8 @@ Discord/REPL ─▶ WatchController ─▶ [ApprovalGate] ─▶ DataFeed(1-min)
 ```
 
 - `alertengine/aggregator.py` — folds 1-min → clock-aligned 2-min bars
-  (flush-on-advance; handles IEX missing-minute). Alpaca has no native 2-min
-  stream, hence the aggregation.
+  (flush-on-advance; handles IEX missing-minute and Robinhood synthetic bars).
+  Neither provider supplies native 2-min bars, hence the aggregation.
 - `alertengine/engine.py` — owns per-symbol 2-min history and confirmation
   machines. Keeps `AlertRule` stateless.
 - `alertengine/alert_window.py` — owns strict time parsing and Pacific/DST window
@@ -60,6 +62,8 @@ Discord/REPL ─▶ WatchController ─▶ [ApprovalGate] ─▶ DataFeed(1-min)
   subscription when Discord or the REPL changes the watchlist.
 - `alertengine/discord_bot.py` — allowlisted slash commands + alert delivery;
   connects outbound, with no inbound EC2 ports.
+- `alertengine/feeds/robinhood_mcp_transport.py` — exposes only the read-only
+  historical-bars tool; no generic MCP or order call is available to the app.
 - `alertengine/settings.py` — **all tunables live here** (indicator params, screen
   filters, cooldown), as generic publishable placeholders. Real confirmed values
   live in git-ignored `settings_local.py`, which overrides them at import time —
@@ -98,7 +102,8 @@ identical.
   3.10, CI/deploy use 3.11, and the Windows guide recommends 3.12. Code stays
   3.10-safe (PEP 604 `X | None`, builtin generics OK).
 - Deps: `pandas`, `numpy`, `yfinance` (screening), `alpaca-py` (live 1-min feed),
-  `discord.py` (remote control/alerts), `python-dotenv` (`.env` loading). Install
+  `mcp` (authenticated Robinhood historical reads), `discord.py` (remote
+  control/alerts), `python-dotenv` (`.env` loading). Install
   with `pip install -e ".[dev]"` in the venv.
 
 ## Documentation convention
@@ -113,8 +118,8 @@ identical.
 
 ## Status / roadmap
 
-Build Order steps 1–10 are **built and tested**. The lean AWS stack, scheduled
+Build Order steps 1–11 are **built and tested**. The lean AWS stack, scheduled
 pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
-Application logs currently live in journald and are inspected through SSM; do
-not claim the provisioned CloudWatch engine log group is receiving them until a
-shipping agent is actually configured. See `docs/ARCHITECTURE.md` for current status.
+The read-only Robinhood overnight watcher is the latest deployment increment.
+Structured journald output is shipped by the CloudWatch agent into the retained
+engine/pre-screen streams. See `docs/ARCHITECTURE.md` for current status.

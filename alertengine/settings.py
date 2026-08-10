@@ -43,6 +43,18 @@ PRESCREEN_REPORT_PATH = "prescreen_report.json"  # audit summary for Discord
 PRESCREEN_TIMEOUT_SECONDS = 300  # keep an Alpaca/API stall from wedging the bot
 MANUAL_WATCHLIST_PATH = "alertengine/data/manual_watchlist.txt"
 
+# Optional second, overnight watcher. It is deliberately off in the public
+# configuration and has a separate human-managed watchlist. Private settings
+# may enable it and tune its hours without publishing strategy details.
+PENNY_WATCHER_ENABLED = False
+PENNY_WINDOW_START = "00:00"
+PENNY_WINDOW_END = "23:59"
+PENNY_WATCHLIST_PATH = "alertengine/data/penny_watchlist.txt"
+ROBINHOOD_OAUTH_PATH = "alertengine/data/robinhood_oauth.json"
+ROBINHOOD_MCP_URL = "https://agent.robinhood.com/mcp/trading"
+ROBINHOOD_POLL_SECONDS = 15.0
+ROBINHOOD_BACKFILL_MINUTES = 180
+
 # De-dup / cooldown: min 2-min bars after a buy alert (and setup must clear)
 # before a symbol can re-arm. Prevents re-firing on the same oversold episode.
 COOLDOWN_BARS = 5

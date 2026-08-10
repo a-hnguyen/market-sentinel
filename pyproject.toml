@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv", # load ALPACA_* from .env
     "tzdata",        # zoneinfo tz database (needed on Windows; no-op elsewhere)
     "discord.py>=2.5,<3", # private slash-command control + alert delivery
+    "mcp>=1.26,<2", # authenticated read-only Robinhood historical-bar transport
 ]
 
 [project.optional-dependencies]

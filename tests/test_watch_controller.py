@@ -66,6 +66,22 @@ def test_watch_restarts_subscription_and_persists(tmp_path, monkeypatch):
     asyncio.run(drive())
 
 
+def test_controller_can_use_an_independent_watchlist_path(tmp_path):
+    async def drive():
+        path = tmp_path / "penny.txt"
+        controller = WatchController(
+            _engine(_Feed()),
+            manual_watchlist_path=str(path),
+            manual_s3_uri="",
+            task_name="penny-market-watch",
+        )
+        await controller.watch_many("AMC CELZ")
+        await controller.stop()
+        assert path.read_text() == "AMC\nCELZ\n"
+
+    asyncio.run(drive())
+
+
 def test_unwatch_restarts_or_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MANUAL_WATCHLIST_PATH", str(tmp_path / "watch.txt"))
 

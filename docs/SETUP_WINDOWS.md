@@ -61,6 +61,11 @@ production is using the same bot token.
 See `DISCORD_SETUP.md` for the EC2 configuration. Normal Windows development
 uses the local REPL and does not connect another Discord Gateway session.
 
+The optional Robinhood watcher is production-oriented and documented in
+`ROBINHOOD_WATCHER.md`. Do not run it locally at the same time as production:
+both processes could refresh and overwrite the same OAuth credential. The
+normal Windows replay/live workflow below continues to use Alpaca.
+
 ## 6. Test it before you rely on it
 
 First run the automated checks:

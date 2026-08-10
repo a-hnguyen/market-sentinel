@@ -3,6 +3,8 @@
 `market-sentinel` is an asynchronous alert service, not an auto-trader. It
 screens stocks, watches an approved set over Alpaca market data, and sends
 Discord/console alerts when a setup arms or confirms. It never submits orders.
+An optional second engine watches a separately curated penny/swing list over
+Robinhood 24/5 historical bars; its application adapter is read-only too.
 
 This document describes the code and AWS deployment as they exist now. The
 README is the shorter entry point; this is the detailed current-state map.
@@ -76,6 +78,28 @@ Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
 Yahoo Most Actives belongs to the separate interactive `screen` path. It does
 not populate the curated spreadsheet or feed this scheduled RSI pre-screen.
 
+The optional overnight path runs alongside, rather than inside, the Alpaca
+stream:
+
+```text
+Discord /penny-watch ─▶ separate ApprovalGate + WatchController
+                                      │
+                                      ▼
+                         Robinhood MCP historical read
+                              1-minute 24/5 bars
+                                      │
+                     overlap polling + timestamp de-duplication
+                                      │
+                                      ▼
+                  synthetic-aware, clock-aligned 2-minute candles
+                                      │
+                                      ▼
+                     independent AlertEngine state machines
+                                      │
+                                      ▼
+                    tagged console + Discord alerts (no orders)
+```
+
 ## Runtime modes
 
 All modes build the same `AlertEngine`; only the adapters and control surface
@@ -106,6 +130,8 @@ kind of state or decision.
 | `AlpacaFeed` | REST requests and one websocket connection attempt | retry scheduling after a failed socket |
 | `DiscordBot` | command authorization, slash commands, alert embeds, background manual pre-screen job | trading logic |
 | `PreScreener` | 4h/1h RSI confluence | live BB/RSI alert decisions |
+| `RobinhoodHistoricalFeed` | request batching and response normalization | OAuth, polling, strategy logic |
+| `HistoricalPollingFeed` | completed-minute polling, overlap recovery, de-duplication | provider authentication, indicator rules |
 
 This separation is deliberate. For example, a websocket failure escapes
 `AlpacaFeed`; `WatchController` logs it and creates a fresh subscription after a
@@ -140,6 +166,11 @@ evaluating rules or sending alerts. It is a best-effort recent wall-clock
 lookback and may be empty off-hours; the engine then warms naturally from live
 bars.
 
+For Robinhood, gap-filled bars carry `interpolated=true`. They retain clock
+alignment for indicators, but a fully synthetic two-minute candle cannot arm a
+setup or count as a green/red confirmation. Mixed two-minute buckets derive
+OHLCV from real traded minutes only.
+
 ## Watchlist lifecycle
 
 Three sources feed the same in-memory `ApprovalGate`:
@@ -167,6 +198,11 @@ a future pre-screen it can be automatically selected again.
 `/stop confirm:true` stops market streaming only. The Discord bot and systemd
 service remain online, the watchlist remains intact, and `/start` resumes it.
 
+When enabled, `/penny-watch`, `/penny-unwatch`, `/penny-watchlist`,
+`/penny-start`, `/penny-stop`, and `/penny-status` operate only on the second
+watcher. Its local `penny_watchlist.txt` and S3 object are independent of the
+regular manual and automatic sets.
+
 ## Pre-screen lifecycle
 
 All pre-screen entry points call `run_prescreen()`:
@@ -191,7 +227,8 @@ Both the systemd job and Discord background job are capped at five minutes.
 
 ## The swappable seams
 
-`alertengine/interfaces.py` defines four adapter boundaries plus one optional
+`alertengine/interfaces.py` retains the four original adapter boundaries, adds
+one range-based historical-data boundary, and includes one optional
 strategy-confirmation extension:
 
 ```python
@@ -200,6 +237,11 @@ class Screener:
 
 class DataFeed:
     async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]: ...
+
+class HistoricalBarFeed:
+    async def fetch_bars(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> list[Bar]: ...
 
 class AlertRule:
     def evaluate(self, symbol: str, bars: list[Bar]) -> Alert | None: ...
@@ -249,7 +291,8 @@ Security and operations:
 - EC2 uses an instance role and IMDSv2; GitHub Actions uses OIDC, so neither
   path stores AWS access keys;
 - SSM Parameter Store holds runtime credentials/IDs; the private S3 bucket holds
-  private strategy files, the curated watchlist, and the persisted manual list;
+  private strategy files, curated watchlists, and refreshable Robinhood OAuth
+  state; the token file is mode `0600` and never enters git;
 - structured JSON application logs remain available in systemd `journald` and
   are also shipped by the CloudWatch agent into per-instance `engine` and
   `prescreen` streams with 14-day retention;
@@ -259,7 +302,9 @@ Security and operations:
 
 Local `candidates.csv` and `alerts.log` survive process restarts but not EC2 root
 volume replacement. The manual watchlist survives replacement through its S3
-copy; automatic candidates can be rebuilt by the post-close pre-screen.
+copy; automatic candidates can be rebuilt by the post-close pre-screen. The
+penny watchlist and refreshable Robinhood OAuth state also survive through
+their separate private S3 objects.
 
 ## Failure behavior
 
@@ -273,6 +318,7 @@ copy; automatic candidates can be rebuilt by the post-close pre-screen.
 | Engine repeatedly crashes | systemd stops after its start limit and triggers SNS failure notification |
 | EC2 becomes unhealthy/disappears | CloudWatch status-check alarm publishes to SNS |
 | yfinance screen fails | return the process's last successful screen result |
+| Robinhood query/OAuth refresh fails | fail the watcher attempt; its controller retries after 10 seconds and logs the failure |
 
 ## Where to make common changes
 

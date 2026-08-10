@@ -75,6 +75,11 @@ replay should use the normal console REPL (`python -m alertengine --replay`).
 Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
 `/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
 
+If the optional Robinhood watcher is enabled, the bot also registers
+`/penny-watch`, `/penny-unwatch`, `/penny-watchlist`, `/penny-status`,
+`/penny-start`, and `/penny-stop confirm:true`. These use an independent
+persisted watchlist and do not affect the regular Alpaca watcher.
+
 - `/watch STOCKS` accepts one or more space-separated symbols, persists the
   valid entries locally and to the private S3 overlay, reports invalid entries
   as skipped, and starts/restarts streaming once. If S3 fails, the local change

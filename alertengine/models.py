@@ -13,6 +13,14 @@ class Bar:
     low: float
     close: float
     volume: float
+    # Some historical providers fill quiet intervals with a zero-volume,
+    # carry-forward candle. Preserve that provenance so strategy code can keep
+    # a clock-aligned indicator series without mistaking a synthetic candle for
+    # real green/red price action.
+    interpolated: bool = False
+    # Provider-normalized session label (for example ``overnight``). Existing
+    # Alpaca bars do not need one, so this remains optional.
+    session: str | None = None
 
 
 @dataclass

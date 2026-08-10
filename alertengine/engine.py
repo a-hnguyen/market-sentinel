@@ -13,6 +13,7 @@ direction differ.
 """
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -56,6 +57,8 @@ class _DirectionMachine:
 
     def is_confirm_close(self, bar: Bar) -> bool:
         """A confirming close: green (up) for long, red (down) for short."""
+        if bar.interpolated:
+            return False
         return bar.close > bar.open if self.long else bar.close < bar.open
 
     def reset(self) -> None:
@@ -189,7 +192,13 @@ class AlertEngine:
         if provider is None:
             _LOG.info("event=backfill_skip reason=unsupported")
             return
-        one_min_bars = await asyncio.to_thread(provider, symbols)
+        # REST adapters are usually synchronous (Alpaca), while an MCP-backed
+        # provider is naturally async. Support both without forcing either
+        # transport to block the event loop or fake a synchronous API.
+        if inspect.iscoroutinefunction(provider):
+            one_min_bars = await provider(symbols)
+        else:
+            one_min_bars = await asyncio.to_thread(provider, symbols)
         if not one_min_bars:
             _LOG.warning("event=backfill_empty symbols=%s", ",".join(symbols))
             return

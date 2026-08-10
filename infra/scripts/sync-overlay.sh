@@ -24,6 +24,13 @@ aws s3 cp "$S3/watchlist.xls" "$AE/data/watchlist.xls" \
 aws s3 cp "$S3/runtime/manual_watchlist.txt" "$AE/data/manual_watchlist.txt" \
   --region "$AWS_REGION" || echo "no persisted manual watchlist in overlay"
 
+# The overnight watcher has an independent watchlist and refreshable Robinhood
+# OAuth state. Both remain private and survive instance replacement.
+aws s3 cp "$S3/runtime/penny_watchlist.txt" "$AE/data/penny_watchlist.txt" \
+  --region "$AWS_REGION" || echo "no persisted penny watchlist in overlay"
+aws s3 cp "$S3/runtime/robinhood_oauth.json" "$AE/data/robinhood_oauth.json" \
+  --region "$AWS_REGION" || echo "no Robinhood OAuth state in overlay"
+
 # Private rule package (the real IP). Sync the whole dir if present.
 if aws s3 ls "$S3/rules/_private/" --region "$AWS_REGION" >/dev/null 2>&1; then
   mkdir -p "$AE/rules/_private"

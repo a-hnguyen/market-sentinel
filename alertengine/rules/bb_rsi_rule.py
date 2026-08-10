@@ -42,6 +42,17 @@ class BBRSIRule(AlertRule):
         r = rsi(closes, self.rsi_period)
         last = bars[-1]
 
+        # A zero-volume carry-forward close may keep rolling indicators warm,
+        # but it is not new market information and must never arm a trade.
+        if last.interpolated:
+            _LOG.info(
+                "event=rule_evaluation symbol=%s direction=buy "
+                "reason=interpolated_skip bar_time=%s",
+                symbol,
+                last.timestamp.isoformat(),
+            )
+            return None
+
         bb_pass = last.close < lower
         rsi_pass = r < self.rsi_threshold
         _LOG.info(

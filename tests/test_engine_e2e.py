@@ -5,12 +5,14 @@ pytest (no extra plugin).
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from alertengine.engine import AlertEngine
 from alertengine.feeds.mock_feed import MockFeed
 from alertengine.gate import ApprovalGate
 from alertengine.interfaces import Notifier
 from alertengine.models import Alert
+from alertengine.models import Bar
 from alertengine.rules.bb_rsi_rule import BBRSIRule
 from alertengine.screeners.mock_screener import MockScreener
 
@@ -78,3 +80,23 @@ async def _run_dedup():
 
 def test_dedup_does_not_spam_every_bar():
     asyncio.run(_run_dedup())
+
+
+def test_interpolated_bar_never_arms_buy():
+    closes = [100.0] * 11 + [99, 98, 96, 93, 89, 84, 78, 71, 63]
+    bars = [
+        Bar(
+            "ZZ",
+            datetime(2026, 7, 2, 14, 0, tzinfo=timezone.utc)
+            + timedelta(minutes=2 * index),
+            close,
+            close,
+            close,
+            close,
+            0,
+            interpolated=index == len(closes) - 1,
+        )
+        for index, close in enumerate(closes)
+    ]
+
+    assert BBRSIRule().evaluate("ZZ", bars) is None

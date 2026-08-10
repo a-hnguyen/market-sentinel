@@ -23,6 +23,7 @@ from .interfaces import Notifier
 from .market_session import in_premarket
 from .models import Alert, Candidate
 from .notifiers.multi_notifier import MultiNotifier
+from .notifiers.tagged_notifier import TaggedNotifier
 from .prescreen.reporting import load_report
 from .prescreen.sinks import load_candidates
 from .watch_controller import WatchController
@@ -65,11 +66,15 @@ class DiscordBot(discord.Client, Notifier):
         engine: AlertEngine,
         controller: WatchController,
         config: DiscordConfig,
+        penny_engine: AlertEngine | None = None,
+        penny_controller: WatchController | None = None,
     ) -> None:
         super().__init__(intents=discord.Intents.none())
         self.engine = engine
         self.controller = controller
         self.config = config
+        self.penny_engine = penny_engine
+        self.penny_controller = penny_controller
         self.tree = app_commands.CommandTree(self)
         self._prescreen_task: asyncio.Task[None] | None = None
         self._register_commands()
@@ -345,12 +350,137 @@ class DiscordBot(discord.Client, Notifier):
         @self.tree.command(name="help", description="Show market-sentinel commands")
         async def help_command(interaction: discord.Interaction) -> None:
             if await self._guard(interaction):
+                penny = ""
+                if self.penny_controller is not None:
+                    penny = (
+                        "\n`/penny-watch STOCKS` · `/penny-unwatch STOCKS` · "
+                        "`/penny-watchlist`\n"
+                        "`/penny-status [STOCK]` · `/penny-start` · "
+                        "`/penny-stop confirm:true`"
+                    )
                 await interaction.response.send_message(
                     "**Commands**\n"
                     "`/watch STOCKS` · `/unwatch STOCKS` · `/watchlist`\n"
                     "`/status [STOCK]` · `/screen` · `/prescreen`\n"
-                    "`/start` · `/stop confirm:true`"
+                    "`/start` · `/stop confirm:true`" + penny
                 )
+
+        if self.penny_engine is not None and self.penny_controller is not None:
+            self._register_penny_commands()
+
+    def _register_penny_commands(self) -> None:
+        engine = self.penny_engine
+        controller = self.penny_controller
+        if engine is None or controller is None:
+            return
+
+        @self.tree.command(
+            name="penny-watch", description="Add stocks to the overnight watcher"
+        )
+        @app_commands.describe(stocks="Space-separated tickers, for example AMC CELZ")
+        async def penny_watch(interaction: discord.Interaction, stocks: str) -> None:
+            if not await self._guard(interaction):
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                added, invalid, symbols = await controller.watch_many(stocks)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
+            lines = []
+            if added:
+                lines.append(f"✅ Penny watcher added: **{self._symbols(added)}**")
+            if invalid:
+                lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            if controller.persistence_status["last_error"]:
+                lines.append("⚠️ Saved locally, but S3 persistence failed.")
+            lines.append(f"Penny watchlist: {self._symbols(symbols)}")
+            await interaction.followup.send("\n".join(lines))
+
+        @self.tree.command(
+            name="penny-unwatch", description="Remove stocks from the overnight watcher"
+        )
+        @app_commands.describe(stocks="Space-separated tickers to remove")
+        async def penny_unwatch(interaction: discord.Interaction, stocks: str) -> None:
+            if not await self._guard(interaction):
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                removed, invalid, symbols = await controller.unwatch_many(stocks)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
+            lines = []
+            if removed:
+                lines.append(f"🛑 Penny watcher removed: **{self._symbols(removed)}**")
+            if invalid:
+                lines.append(f"⚠️ Skipped invalid: `{self._symbols(invalid)}`")
+            if controller.persistence_status["last_error"]:
+                lines.append("⚠️ Saved locally, but S3 persistence failed.")
+            lines.append(f"Penny watchlist: {self._symbols(symbols)}")
+            await interaction.followup.send("\n".join(lines))
+
+        @self.tree.command(
+            name="penny-watchlist", description="Show overnight watched stocks"
+        )
+        async def penny_watchlist(interaction: discord.Interaction) -> None:
+            if await self._guard(interaction):
+                await interaction.response.send_message(
+                    f"**Penny watchlist:** {self._symbols(engine.gate.watchlist())}"
+                )
+
+        @self.tree.command(name="penny-start", description="Start overnight watcher")
+        async def penny_start(interaction: discord.Interaction) -> None:
+            if not await self._guard(interaction):
+                return
+            try:
+                symbols = await controller.start()
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            await interaction.response.send_message(
+                f"▶️ Penny watcher streaming {self._symbols(symbols)}"
+            )
+
+        @self.tree.command(name="penny-stop", description="Stop overnight watcher")
+        @app_commands.describe(confirm="Must be true to stop the watcher")
+        async def penny_stop(
+            interaction: discord.Interaction, confirm: bool = False
+        ) -> None:
+            if not await self._guard(interaction):
+                return
+            if not confirm:
+                await interaction.response.send_message(
+                    "Run `/penny-stop confirm:true` to stop it.", ephemeral=True
+                )
+                return
+            await interaction.response.defer(thinking=True)
+            await controller.stop()
+            await interaction.followup.send("⏹️ Penny watcher stopped.")
+
+        @self.tree.command(name="penny-status", description="Show overnight status")
+        @app_commands.describe(stock="Optional ticker to inspect")
+        async def penny_status(
+            interaction: discord.Interaction, stock: str | None = None
+        ) -> None:
+            if not await self._guard(interaction):
+                return
+            data = engine.status()
+            data["controller_running"] = controller.running
+            data["active_symbols"] = controller.active_symbols
+            data["watchlist"] = engine.gate.watchlist()
+            data["manual_symbols"] = controller.manual_symbols
+            data["manual_persistence"] = controller.persistence_status
+            if stock:
+                try:
+                    symbol = controller.normalize(stock)
+                except ValueError as exc:
+                    await interaction.response.send_message(str(exc), ephemeral=True)
+                    return
+                data["symbols"] = {symbol: data["symbols"].get(symbol, "no bars yet")}
+            await interaction.response.send_message(
+                f"```json\n{json.dumps(data, indent=2)[:1850]}\n```"
+            )
 
     @staticmethod
     def alert_embed(alert: Alert) -> discord.Embed:
@@ -395,7 +525,11 @@ class DiscordBot(discord.Client, Notifier):
         await channel.send(embed=self.alert_embed(alert))
 
 
-async def run_discord(engine: AlertEngine, auto_approve: bool = True) -> None:
+async def run_discord(
+    engine: AlertEngine,
+    auto_approve: bool = True,
+    penny_engine: AlertEngine | None = None,
+) -> None:
     config = DiscordConfig.from_env()
     controller = WatchController(engine)
     controller.load_manual()
@@ -403,12 +537,37 @@ async def run_discord(engine: AlertEngine, auto_approve: bool = True) -> None:
         symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
         controller.load_automatic(symbols)
 
-    bot = DiscordBot(engine, controller, config)
+    penny_controller = None
+    if penny_engine is not None:
+        penny_controller = WatchController(
+            penny_engine,
+            manual_watchlist_path=settings.PENNY_WATCHLIST_PATH,
+            manual_s3_uri=os.environ.get("PENNY_WATCHLIST_S3_URI", ""),
+            task_name="penny-market-watch",
+            log_name="alertengine.penny_watch",
+        )
+        penny_controller.load_manual()
+
+    bot = DiscordBot(
+        engine,
+        controller,
+        config,
+        penny_engine=penny_engine,
+        penny_controller=penny_controller,
+    )
     engine.notifier = MultiNotifier([engine.notifier, bot])
+    if penny_engine is not None:
+        penny_engine.notifier = TaggedNotifier(
+            MultiNotifier([penny_engine.notifier, bot]), "penny-overnight"
+        )
     if engine.gate.watchlist():
         await controller.start()
+    if penny_controller is not None and penny_engine.gate.watchlist():
+        await penny_controller.start()
 
     try:
         await bot.start(config.token)
     finally:
         await controller.stop()
+        if penny_controller is not None:
+            await penny_controller.stop()
