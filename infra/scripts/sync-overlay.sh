@@ -30,6 +30,9 @@ aws s3 cp "$S3/runtime/penny_watchlist.txt" "$AE/data/penny_watchlist.txt" \
   --region "$AWS_REGION" || echo "no persisted penny watchlist in overlay"
 aws s3 cp "$S3/runtime/robinhood_oauth.json" "$AE/data/robinhood_oauth.json" \
   --region "$AWS_REGION" || echo "no Robinhood OAuth state in overlay"
+if [[ -f "$AE/data/robinhood_oauth.json" ]]; then
+  chmod 600 "$AE/data/robinhood_oauth.json"
+fi
 
 # Private rule package (the real IP). Sync the whole dir if present.
 if aws s3 ls "$S3/rules/_private/" --region "$AWS_REGION" >/dev/null 2>&1; then
