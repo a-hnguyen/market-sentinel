@@ -1,7 +1,7 @@
 # Robinhood overnight watcher
 
 This optional, alert-only watcher reads Robinhood 24/5 one-minute historical
-bars through MCP, constructs two-minute bars locally, and runs an independent
+bars through MCP at a configurable candle interval and runs an independent
 copy of the existing buy/sell alert state machine. The application exposes only
 `get_equity_historicals`; it has no generic MCP call or order method.
 
@@ -13,10 +13,14 @@ Add these values to the git-ignored `alertengine/settings_local.py`:
 PENNY_WATCHER_ENABLED = True
 PENNY_WINDOW_START = "HH:MM"
 PENNY_WINDOW_END = "HH:MM"
+PENNY_BAR_INTERVAL_MINUTES = 1
+PENNY_ARM_TIMEOUT_BARS = 30
 ```
 
 A start after the end represents a Pacific-time window crossing midnight. The
-public defaults leave the watcher disabled; real hours remain private.
+one-minute configuration evaluates the same indicator periods on one-minute
+candles; 30 timeout bars preserve the prior 30-minute setup-expiration window.
+The public defaults leave the watcher disabled; real hours remain private.
 
 ## Bootstrap OAuth
 

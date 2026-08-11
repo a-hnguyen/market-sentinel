@@ -110,6 +110,7 @@ class AlertEngine:
         window_end: str = settings.WINDOW_END,
         alert_timezone: str = settings.ALERT_TIMEZONE,
         buy_confirmation_rule: ConfirmationRule | None = None,
+        bar_interval_minutes: int = 2,
     ) -> None:
         self.screener = screener
         self.feed = feed
@@ -123,11 +124,12 @@ class AlertEngine:
         self.arm_timeout_bars = arm_timeout_bars
         self.max_history = max_history
         self.buy_confirmation_rule = buy_confirmation_rule
+        self.bar_interval_minutes = bar_interval_minutes
         self._alert_window = AlertWindow.from_strings(
             window_start, window_end, alert_timezone
         )
 
-        self._agg = BarAggregator()
+        self._agg = BarAggregator(self.bar_interval_minutes)
         self._states: dict[str, _SymbolState] = {}
         # Latest screened candidate per symbol, so alerts can carry the day's
         # % change / relative volume (which live on the Candidate, not the bars).
@@ -164,7 +166,7 @@ class AlertEngine:
         """
         # A WatchController may intentionally restart the stream when the remote
         # watchlist changes. Never carry a half-built bucket across subscriptions.
-        self._agg = BarAggregator()
+        self._agg = BarAggregator(self.bar_interval_minutes)
         self.watching = True
         _LOG.info("event=watch_start symbols=%s", ",".join(symbols))
         try:
@@ -207,7 +209,7 @@ class AlertEngine:
         # bleed into (and mis-complete on) the first live bar. The trailing
         # partial bucket is intentionally dropped — live bars supply the freshest
         # data, so only fully-formed 2-min bars seed the warm-up window.
-        warm_agg = BarAggregator()
+        warm_agg = BarAggregator(self.bar_interval_minutes)
         completed_by_symbol: dict[str, list[Bar]] = {}
         for one_min in one_min_bars:
             completed = warm_agg.add(one_min)
@@ -365,12 +367,14 @@ class AlertEngine:
         if machine.long:
             message = (
                 f"BUY {bar.symbol}: confirmation passed after "
-                f"{machine.consecutive} consecutive green 2-min closes "
+                f"{machine.consecutive} consecutive green "
+                f"{self.bar_interval_minutes}-min closes "
                 f"(close {bar.close:.2f})"
             )
         else:
             message = (
-                f"SELL {bar.symbol}: {machine.confirm_bars} red 2-min closes "
+                f"SELL {bar.symbol}: {machine.confirm_bars} red "
+                f"{self.bar_interval_minutes}-min closes "
                 f"confirmed after overbought arm (close {bar.close:.2f})"
             )
         alert = Alert(

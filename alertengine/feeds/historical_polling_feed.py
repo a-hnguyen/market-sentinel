@@ -39,6 +39,7 @@ class HistoricalPollingFeed(DataFeed):
         poll_seconds: float = 15.0,
         overlap_minutes: int = 3,
         backfill_minutes: int = 180,
+        aggregation_minutes: int = 2,
         clock: Clock | None = None,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
@@ -48,10 +49,12 @@ class HistoricalPollingFeed(DataFeed):
             raise ValueError("overlap_minutes must be non-negative")
         if backfill_minutes <= 0:
             raise ValueError("backfill_minutes must be positive")
+        bucket_start(datetime.min, aggregation_minutes)
         self._source = source
         self._poll_seconds = poll_seconds
         self._overlap = timedelta(minutes=overlap_minutes)
         self._backfill = timedelta(minutes=backfill_minutes)
+        self._aggregation_minutes = aggregation_minutes
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
 
@@ -80,7 +83,9 @@ class HistoricalPollingFeed(DataFeed):
                 # The warm-up path drops its trailing partial 2-minute bucket.
                 # Start this subscription at the current even-minute boundary
                 # so the live aggregator can reconstruct that bucket cleanly.
-                trailing_bucket = bucket_start(end - timedelta(minutes=1))
+                trailing_bucket = bucket_start(
+                    end - timedelta(minutes=1), self._aggregation_minutes
+                )
                 first = trailing_bucket - timedelta(minutes=1)
                 cursors = {symbol: first for symbol in normalized}
 

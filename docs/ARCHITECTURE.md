@@ -91,7 +91,7 @@ Discord /penny-watch ─▶ separate ApprovalGate + WatchController
                      overlap polling + timestamp de-duplication
                                       │
                                       ▼
-                  synthetic-aware, clock-aligned 2-minute candles
+                   configured candles (currently native 1-minute)
                                       │
                                       ▼
                      independent AlertEngine state machines

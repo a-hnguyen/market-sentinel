@@ -96,6 +96,7 @@ def build_penny_engine() -> AlertEngine | None:
         source,
         poll_seconds=settings.ROBINHOOD_POLL_SECONDS,
         backfill_minutes=settings.ROBINHOOD_BACKFILL_MINUTES,
+        aggregation_minutes=settings.PENNY_BAR_INTERVAL_MINUTES,
     )
     return AlertEngine(
         screener=EmptyScreener(),
@@ -108,6 +109,8 @@ def build_penny_engine() -> AlertEngine | None:
         window_end=settings.PENNY_WINDOW_END,
         alert_timezone=settings.ALERT_TIMEZONE,
         buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
+        bar_interval_minutes=settings.PENNY_BAR_INTERVAL_MINUTES,
+        arm_timeout_bars=settings.PENNY_ARM_TIMEOUT_BARS,
     )
 
 

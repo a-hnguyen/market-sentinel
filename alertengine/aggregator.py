@@ -1,4 +1,4 @@
-"""1-min -> 2-min bar aggregation.
+"""Clock-aligned aggregation of provider-native 1-minute bars.
 
 Alpaca's real-time stream delivers 1-min bars; there is no native 2-min stream,
 so we fold consecutive 1-min bars into clock-aligned 2-min bars. A bug here
@@ -28,9 +28,15 @@ from datetime import datetime
 from .models import Bar
 
 
-def bucket_start(ts: datetime) -> datetime:
-    """Floor a timestamp to its even-minute 2-min bucket start."""
-    return ts.replace(minute=(ts.minute // 2) * 2, second=0, microsecond=0)
+def bucket_start(ts: datetime, interval_minutes: int = 2) -> datetime:
+    """Floor a timestamp to its clock-aligned aggregation bucket."""
+    if interval_minutes <= 0 or 60 % interval_minutes != 0:
+        raise ValueError("interval_minutes must be a positive divisor of 60")
+    return ts.replace(
+        minute=(ts.minute // interval_minutes) * interval_minutes,
+        second=0,
+        microsecond=0,
+    )
 
 
 @dataclass
@@ -88,16 +94,24 @@ class _Bucket:
 
 
 class BarAggregator:
-    """Folds 1-min bars into 2-min bars, per symbol."""
+    """Folds 1-minute bars into a configurable interval, per symbol."""
 
-    def __init__(self) -> None:
+    def __init__(self, interval_minutes: int = 2) -> None:
+        # Validate once rather than for every incoming bar.
+        bucket_start(datetime.min, interval_minutes)
+        self.interval_minutes = interval_minutes
         self._buckets: dict[str, _Bucket] = {}
 
     def add(self, bar: Bar) -> Bar | None:
         """Feed one 1-min bar. Returns a completed 2-min Bar if this bar
         advanced to a new bucket (flushing the previous one), else None.
         """
-        start = bucket_start(bar.timestamp)
+        if self.interval_minutes == 1:
+            # Provider bars represent completed one-minute candles, so no
+            # buffering or aggregation is needed at the native resolution.
+            return bar
+
+        start = bucket_start(bar.timestamp, self.interval_minutes)
         current = self._buckets.get(bar.symbol)
 
         if current is not None and start == current.start:

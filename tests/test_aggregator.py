@@ -41,6 +41,14 @@ def test_bucket_start_aligns_to_even_minute():
     )
 
 
+def test_one_minute_mode_returns_completed_provider_bar_immediately():
+    agg = BarAggregator(interval_minutes=1)
+    completed = bar("AAA", 31, 10, 12, 9, 11, 100)
+
+    assert agg.add(completed) is completed
+    assert agg.flush_all() == []
+
+
 def test_two_bars_merge_into_one_2min_bar():
     agg = BarAggregator()
     # 09:30 and 09:31 belong to the same 09:30 bucket.

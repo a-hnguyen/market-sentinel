@@ -5,7 +5,7 @@ market data and sends setup/confirmation alerts to a private Discord channel.
 It is an alerting tool, not an auto-trader: it never submits orders.
 
 An optional second watcher polls Robinhood's authenticated MCP endpoint for
-24/5 one-minute bars, constructs two-minute candles locally, and applies the
+24/5 one-minute bars and applies the
 same alert pipeline to a separately managed overnight watchlist. Its adapter
 exposes historical reads only; no order tool is available to the application.
 
@@ -18,7 +18,7 @@ Discord or local REPL
         │                                               │
         └─ overnight watchlist ─▶ Robinhood MCP poll ───┤
                                                         ▼
-                                           2-min aggregation
+                                      configured bar aggregation
                                                         │
                                    alert window + BB/RSI rules
                                                         │
