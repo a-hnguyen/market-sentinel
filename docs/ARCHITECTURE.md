@@ -159,7 +159,10 @@ This separation is deliberate. For example, a websocket failure escapes
    red closes confirm SELL. An optional `ConfirmationRule` may apply additional
    private checks before BUY fires. A timeout still bounds the armed state, and
    a cooldown suppresses repeats.
-8. `MultiNotifier` sends the alert to the console/log and Discord.
+8. For the regular watcher, a delivery gate permits each symbol/alert kind only
+   once per Pacific calendar day. The state machines continue processing any
+   suppressed repeats. The penny watcher retains repeat-after-cooldown behavior.
+9. `MultiNotifier` sends permitted alerts to the console/log and Discord.
 
 REST backfill runs before a live subscription and seeds history without
 evaluating rules or sending alerts. It is a best-effort recent wall-clock

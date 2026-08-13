@@ -65,6 +65,7 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         notifier=ConsoleNotifier(),
         gate=ApprovalGate(),
         buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
+        notify_once_per_kind_per_day=settings.NOTIFY_ONCE_PER_KIND_PER_DAY,
     )
 
 

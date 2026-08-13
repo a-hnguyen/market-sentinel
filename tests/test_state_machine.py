@@ -241,3 +241,42 @@ def test_cooldown_rearms_after_setup_clears_and_floor():
     )
     assert _kinds(n) == ["watch", "buy", "watch"]
     assert e.status()["symbols"]["ZZ"]["phase"] == "armed"
+
+
+def test_daily_delivery_limit_suppresses_repeat_kinds_until_next_pacific_day():
+    n = _Rec()
+    e = _engine(
+        ScriptedRule(hot={0, 5, 10}),
+        n,
+        cooldown_bars=2,
+        notify_once_per_kind_per_day=True,
+    )
+    bars = [
+        _bar(0, False),  # first WATCH
+        _bar(1, True),
+        _bar(2, True),  # first BUY
+        _bar(3, False),
+        _bar(4, False),  # cooldown clears
+        _bar(5, False),  # second WATCH is suppressed
+        _bar(6, True),
+        _bar(7, True),  # second BUY is suppressed
+    ]
+    asyncio.run(_feed(e, bars))
+
+    assert _kinds(n) == ["watch", "buy"]
+    # Suppression affects delivery only: the second setup still reached
+    # COOLDOWN, proving that the state machine kept processing it.
+    assert e.status()["symbols"]["ZZ"]["phase"] == "cooldown"
+
+    # Clear cooldown on the next Pacific day, then both kinds may deliver again.
+    next_day = BASE + timedelta(days=1)
+    next_bars = [
+        Bar("ZZ", next_day, 100, 100, 99, 99, 1000),
+        Bar("ZZ", next_day + timedelta(minutes=2), 100, 100, 99, 99, 1000),
+        Bar("ZZ", next_day + timedelta(minutes=4), 100, 100, 99, 99, 1000),
+        Bar("ZZ", next_day + timedelta(minutes=6), 100, 101, 100, 101, 1000),
+        Bar("ZZ", next_day + timedelta(minutes=8), 100, 101, 100, 101, 1000),
+    ]
+    asyncio.run(_feed(e, next_bars))
+
+    assert _kinds(n) == ["watch", "buy", "watch", "buy"]

@@ -71,6 +71,11 @@ CONFIRM_GREEN_BARS = 2
 CONFIRM_RED_BARS = 2
 ARM_TIMEOUT_BARS = 15
 
+# The regular watcher sends each stage at most once per symbol per Pacific day
+# (BUY armed, BUY confirmed, SELL armed, SELL confirmed). The independent penny
+# watcher keeps its existing repeat-after-cooldown behavior.
+NOTIFY_ONCE_PER_KIND_PER_DAY = True
+
 # Local overrides (git-ignored): real confirmed params, applied last so they win.
 try:
     from .settings_local import *  # noqa: F401,F403

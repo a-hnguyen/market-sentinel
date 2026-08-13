@@ -16,7 +16,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from . import settings
@@ -111,6 +111,7 @@ class AlertEngine:
         alert_timezone: str = settings.ALERT_TIMEZONE,
         buy_confirmation_rule: ConfirmationRule | None = None,
         bar_interval_minutes: int = 2,
+        notify_once_per_kind_per_day: bool = False,
     ) -> None:
         self.screener = screener
         self.feed = feed
@@ -125,12 +126,17 @@ class AlertEngine:
         self.max_history = max_history
         self.buy_confirmation_rule = buy_confirmation_rule
         self.bar_interval_minutes = bar_interval_minutes
+        self.notify_once_per_kind_per_day = notify_once_per_kind_per_day
         self._alert_window = AlertWindow.from_strings(
             window_start, window_end, alert_timezone
         )
 
         self._agg = BarAggregator(self.bar_interval_minutes)
         self._states: dict[str, _SymbolState] = {}
+        # Optional delivery-level de-duplication. This is intentionally separate
+        # from the trading state machines: later setups still transition
+        # normally, but duplicate notification kinds can be quiet for the day.
+        self._notification_days: dict[tuple[str, str], date] = {}
         # Latest screened candidate per symbol, so alerts can carry the day's
         # % change / relative volume (which live on the Candidate, not the bars).
         self._candidates: dict[str, Candidate] = {}
@@ -303,7 +309,7 @@ class AlertEngine:
         hunt. The arming bar itself does NOT count toward the confirmation."""
         setup.kind = machine.watch_kind
         self._enrich(setup, bar.symbol)
-        await self.notifier.send(setup)
+        await self._notify(setup)
         _LOG.info(
             "event=armed symbol=%s direction=%s close=%.4f bar_time=%s",
             bar.symbol,
@@ -386,7 +392,7 @@ class AlertEngine:
             kind=machine.fire_kind,
         )
         self._enrich(alert, bar.symbol)
-        await self.notifier.send(alert)
+        await self._notify(alert)
         _LOG.info(
             "event=alert_fired symbol=%s direction=%s close=%.4f "
             "bar_time=%s context=%s",
@@ -398,6 +404,29 @@ class AlertEngine:
         )
         machine.phase = Phase.COOLDOWN
         machine.bars_since_alert = 0
+
+    async def _notify(self, alert: Alert) -> bool:
+        """Deliver an alert unless its symbol/kind already fired that local day."""
+        if self.notify_once_per_kind_per_day:
+            timestamp = alert.timestamp
+            if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+                local_day = timestamp.date()
+            else:
+                local_day = timestamp.astimezone(self._alert_window.timezone).date()
+            key = (alert.symbol, alert.kind)
+            if self._notification_days.get(key) == local_day:
+                _LOG.info(
+                    "event=notification_suppressed symbol=%s kind=%s "
+                    "reason=already_sent_today local_date=%s",
+                    alert.symbol,
+                    alert.kind,
+                    local_day.isoformat(),
+                )
+                return False
+            self._notification_days[key] = local_day
+
+        await self.notifier.send(alert)
+        return True
 
     def _timeout(
         self, state: _SymbolState, machine: _DirectionMachine, symbol: str
