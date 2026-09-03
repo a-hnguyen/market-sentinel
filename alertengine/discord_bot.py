@@ -253,6 +253,32 @@ class DiscordBot(discord.Client, Notifier):
                     f"**Watchlist:** {self._symbols(self.engine.gate.watchlist())}"
                 )
 
+        @self.tree.command(name="strategy", description="Show or switch alert strategy")
+        @app_commands.describe(name="Strategy name; omit to list available choices")
+        async def strategy(
+            interaction: discord.Interaction, name: str | None = None
+        ) -> None:
+            if not await self._guard(interaction):
+                return
+            if name is None:
+                available = ", ".join(self.engine.available_strategies)
+                await interaction.response.send_message(
+                    f"Active strategy: **{self.engine.strategy_name}**\n"
+                    f"Available: {available}"
+                )
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                active, changed = await self.controller.select_strategy(name)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
+            action = "Switched to" if changed else "Already using"
+            message = f"✅ {action} **{active}**."
+            if self.controller.strategy_persistence_status["last_error"]:
+                message += "\n⚠️ Saved locally, but S3 persistence failed."
+            await interaction.followup.send(message)
+
         @self.tree.command(name="start", description="Start the market watcher")
         async def start(interaction: discord.Interaction) -> None:
             if not await self._guard(interaction):
@@ -294,6 +320,9 @@ class DiscordBot(discord.Client, Notifier):
             status_data["automatic_symbols"] = self.controller.automatic_symbols
             status_data["manual_symbols"] = self.controller.manual_symbols
             status_data["manual_persistence"] = self.controller.persistence_status
+            status_data["strategy_persistence"] = (
+                self.controller.strategy_persistence_status
+            )
             if stock:
                 try:
                     symbol = self.controller.normalize(stock)
@@ -361,7 +390,7 @@ class DiscordBot(discord.Client, Notifier):
                 await interaction.response.send_message(
                     "**Commands**\n"
                     "`/watch STOCKS` · `/unwatch STOCKS` · `/watchlist`\n"
-                    "`/status [STOCK]` · `/screen` · `/prescreen`\n"
+                    "`/status [STOCK]` · `/strategy [NAME]` · `/screen` · `/prescreen`\n"
                     "`/start` · `/stop confirm:true`" + penny
                 )
 
@@ -533,6 +562,7 @@ async def run_discord(
     config = DiscordConfig.from_env()
     controller = WatchController(engine)
     controller.load_manual()
+    controller.load_strategy()
     if auto_approve and os.path.exists(settings.PRESCREEN_OUTPUT_PATH):
         symbols = load_candidates(settings.PRESCREEN_OUTPUT_PATH)
         controller.load_automatic(symbols)

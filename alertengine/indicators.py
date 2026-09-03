@@ -1,7 +1,7 @@
-"""Bollinger Bands and RSI, computed on a 2-min close series.
+"""Technical indicators computed from completed bar data.
 
-Both functions take a sequence of closes (oldest -> newest) and return the value
-for the *latest* bar. Standard formulas; RSI uses Wilder's smoothing.
+Functions take oldest-to-newest values and return the latest result. RSI uses
+Wilder's smoothing; stochastic uses the standard slow %K and %D averages.
 """
 
 from collections.abc import Sequence
@@ -52,3 +52,43 @@ def rsi(closes: Sequence[float], period: int = 14) -> float:
         return 100.0  # no losses over the window -> fully overbought
     rs = avg_gain / avg_loss
     return float(100.0 - 100.0 / (1.0 + rs))
+
+
+def stochastic_oscillator(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    k_period: int = 14,
+    k_smoothing: int = 3,
+    d_period: int = 3,
+) -> tuple[float, float]:
+    """Return the latest slow (%K, %D) values."""
+    if not (len(highs) == len(lows) == len(closes)):
+        raise ValueError("highs, lows, and closes must have the same length")
+    if min(k_period, k_smoothing, d_period) < 1:
+        raise ValueError("stochastic periods must be positive")
+
+    warmup = k_period + k_smoothing + d_period - 2
+    if len(closes) < warmup:
+        raise ValueError(f"need >= {warmup} bars, got {len(closes)}")
+
+    high_values = np.asarray(highs, dtype=float)
+    low_values = np.asarray(lows, dtype=float)
+    close_values = np.asarray(closes, dtype=float)
+    raw_k = []
+    for end in range(k_period - 1, len(close_values)):
+        start = end - k_period + 1
+        highest = float(high_values[start : end + 1].max())
+        lowest = float(low_values[start : end + 1].min())
+        price_range = highest - lowest
+        raw_k.append(
+            50.0
+            if price_range == 0
+            else 100.0 * (float(close_values[end]) - lowest) / price_range
+        )
+
+    k_values = np.convolve(
+        np.asarray(raw_k), np.ones(k_smoothing) / k_smoothing, mode="valid"
+    )
+    d_values = np.convolve(k_values, np.ones(d_period) / d_period, mode="valid")
+    return float(k_values[-1]), float(d_values[-1])

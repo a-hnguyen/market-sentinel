@@ -13,7 +13,7 @@ from typing import AsyncIterator
 
 from alertengine.engine import AlertEngine
 from alertengine.gate import ApprovalGate
-from alertengine.interfaces import AlertRule, DataFeed, Notifier
+from alertengine.interfaces import AlertRule, ArmedTriggerRule, DataFeed, Notifier
 from alertengine.models import Alert, Bar
 from alertengine.screeners.mock_screener import MockScreener
 
@@ -202,3 +202,23 @@ def test_buy_and_sell_are_independent_and_share_protected_history():
     # History preserved: the long machine was still non-idle (cooldown) when the
     # short timed out, so the guard skipped the clear.
     assert st["history"] > 0
+
+
+def test_armed_trigger_replaces_red_candle_confirmation():
+    class SellTrigger(ArmedTriggerRule):
+        def evaluate(self, symbol, bars):
+            return {"trigger_value": 79.9}
+
+    n = _Rec()
+    e = _engine(
+        ScriptedExitRule(hot={0}),
+        n,
+        sell_trigger_rule=SellTrigger(),
+        sell_fire_rule="stochastic_sell",
+    )
+
+    asyncio.run(_feed(e, [_bar(0, True), _bar(1, True)]))
+
+    assert _kinds(n) == ["sell_watch", "sell"]
+    assert n.alerts[-1].rule == "stochastic_sell"
+    assert n.alerts[-1].message.startswith("SELL NOW")

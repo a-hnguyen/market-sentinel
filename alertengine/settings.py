@@ -42,6 +42,7 @@ PRESCREEN_OUTPUT_PATH = "candidates.csv"  # scheduled survivors (git-ignored *.c
 PRESCREEN_REPORT_PATH = "prescreen_report.json"  # audit summary for Discord
 PRESCREEN_TIMEOUT_SECONDS = 300  # keep an Alpaca/API stall from wedging the bot
 MANUAL_WATCHLIST_PATH = "alertengine/data/manual_watchlist.txt"
+ACTIVE_STRATEGY_PATH = "alertengine/data/active_strategy.txt"
 
 # Optional second, overnight watcher. It is deliberately off in the public
 # configuration and has a separate human-managed watchlist. Private settings

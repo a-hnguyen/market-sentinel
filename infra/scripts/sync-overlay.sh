@@ -23,6 +23,8 @@ aws s3 cp "$S3/watchlist.xls" "$AE/data/watchlist.xls" \
 # same object after every /watch or /unwatch; a missing first-boot object is fine.
 aws s3 cp "$S3/runtime/manual_watchlist.txt" "$AE/data/manual_watchlist.txt" \
   --region "$AWS_REGION" || echo "no persisted manual watchlist in overlay"
+aws s3 cp "$S3/runtime/active_strategy.txt" "$AE/data/active_strategy.txt" \
+  --region "$AWS_REGION" || echo "no persisted active strategy in overlay"
 
 # The overnight watcher has an independent watchlist and refreshable Robinhood
 # OAuth state. Both remain private and survive instance replacement.

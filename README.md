@@ -59,6 +59,7 @@ In the REPL, a minimal flow is:
 ```text
 screen
 approve AAPL
+strategy
 watch
 status
 stop
@@ -95,6 +96,8 @@ Replay still enforces the configured alert window against historical bar times.
   Logs and remain locally available through `journalctl`.
 - The manual `/watch` list is backed up to the private S3 overlay and restored
   after EC2 replacement. Candidate CSVs and logs remain single-box state.
+- The active runtime strategy selected through `/strategy` is backed up to the
+  same private overlay and restored before the watcher starts.
 - The optional Robinhood watcher keeps its OAuth state and `/penny-watch` list
   in separate git-ignored files backed up to the same private S3 overlay.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution

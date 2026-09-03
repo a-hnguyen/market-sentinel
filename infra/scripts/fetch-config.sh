@@ -30,6 +30,7 @@ discord_allowed_user_ids=$(get discord_allowed_user_ids)
   echo "DISCORD_ALLOWED_USER_IDS=$discord_allowed_user_ids"
   echo "AWS_REGION=$AWS_REGION"
   echo "MANUAL_WATCHLIST_S3_URI=s3://$OVERLAY_BUCKET/private/runtime/manual_watchlist.txt"
+  echo "ACTIVE_STRATEGY_S3_URI=s3://$OVERLAY_BUCKET/private/runtime/active_strategy.txt"
   echo "PENNY_WATCHLIST_S3_URI=s3://$OVERLAY_BUCKET/private/runtime/penny_watchlist.txt"
   echo "ROBINHOOD_OAUTH_S3_URI=s3://$OVERLAY_BUCKET/private/runtime/robinhood_oauth.json"
 } > "$ENV_FILE"

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from alertengine.indicators import bollinger_bands, rsi
+from alertengine.indicators import bollinger_bands, rsi, stochastic_oscillator
 
 
 def test_bollinger_constant_series_has_zero_width():
@@ -59,3 +59,38 @@ def test_rsi_alternating_is_mid_range():
 def test_rsi_too_few_raises():
     with pytest.raises(ValueError):
         rsi([1.0] * 14, period=14)
+
+
+def test_stochastic_known_values():
+    k, d = stochastic_oscillator(
+        highs=[10, 11, 12, 13],
+        lows=[0, 0, 0, 0],
+        closes=[5, 6, 9, 13],
+        k_period=3,
+        k_smoothing=1,
+        d_period=2,
+    )
+    assert k == pytest.approx(100.0)
+    assert d == pytest.approx(87.5)
+
+
+def test_stochastic_flat_range_is_neutral():
+    k, d = stochastic_oscillator(
+        highs=[10.0] * 4,
+        lows=[10.0] * 4,
+        closes=[10.0] * 4,
+        k_period=2,
+        k_smoothing=2,
+        d_period=2,
+    )
+    assert (k, d) == (50.0, 50.0)
+
+
+def test_stochastic_rejects_mismatched_lengths():
+    with pytest.raises(ValueError, match="same length"):
+        stochastic_oscillator([1, 2], [1], [1, 2])
+
+
+def test_stochastic_too_few_raises():
+    with pytest.raises(ValueError, match="need >= 18 bars"):
+        stochastic_oscillator([1.0] * 17, [0.0] * 17, [0.5] * 17)

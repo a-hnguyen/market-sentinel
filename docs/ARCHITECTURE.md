@@ -122,11 +122,11 @@ kind of state or decision.
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `AlertEngine` | per-symbol bar history, buy/sell confirmation machines, rule evaluation, optional post-pattern confirmation rule | websocket retries, approved-symbol persistence |
+| `AlertEngine` | active strategy, per-symbol bar history, buy/sell confirmation machines, rule evaluation, optional post-pattern confirmation rule | websocket retries, approved-symbol persistence |
 | `AlertWindow` | `HH:MM` parsing, Pacific/DST conversion, normal and overnight window checks | market data filtering |
 | `WatchController` | watch task, reconnect supervision, dynamic subscriptions, automatic/manual provenance, manual persistence | indicator/rule state |
 | `ApprovalGate` | current in-memory union of approved symbols | durable storage |
-| `BarAggregator` | partial clock-aligned 2-minute buckets per symbol | historical indicator state |
+| `BarAggregator` | native 1-minute pass-through or partial clock-aligned multi-minute buckets per symbol | historical indicator state |
 | `AlpacaFeed` | REST requests and one websocket connection attempt | retry scheduling after a failed socket |
 | `DiscordBot` | command authorization, slash commands, alert embeds, background manual pre-screen job | trading logic |
 | `PreScreener` | 4h/1h RSI confluence | live BB/RSI alert decisions |
@@ -139,10 +139,11 @@ This separation is deliberate. For example, a websocket failure escapes
 
 ## One completed-bar journey
 
-1. Alpaca sends 1-minute bars over its websocket.
-2. `BarAggregator` groups bars into even-minute buckets such as
-   `09:30/09:31 → 09:30`. A missing minute may produce a valid one-bar bucket.
-3. `AlertEngine` appends the completed 2-minute bar to the symbol's bounded
+1. Alpaca sends completed 1-minute bars over its websocket.
+2. `BarAggregator` passes native 1-minute strategy bars through immediately or
+   groups them into clock-aligned multi-minute buckets. A missing minute may
+   produce a valid partial bucket.
+3. `AlertEngine` appends the completed strategy bar to the symbol's bounded
    history.
 4. `AlertWindow` converts an aware timestamp to `America/Los_Angeles` and checks
    the inclusive `WINDOW_START`/`WINDOW_END` range.
@@ -157,8 +158,9 @@ This separation is deliberate. For example, a websocket failure escapes
    not count toward confirmation.
 7. Two consecutive green closes confirm the public BUY pattern; two consecutive
    red closes confirm SELL. An optional `ConfirmationRule` may apply additional
-   private checks before BUY fires. A timeout still bounds the armed state, and
-   a cooldown suppresses repeats.
+   private checks after the BUY pattern, while an `ArmedTriggerRule` can replace
+   the candle pattern for either direction. A timeout still bounds the armed
+   state, and a cooldown suppresses repeats.
 8. For the regular watcher, a delivery gate permits each symbol/alert kind only
    once per Pacific calendar day. The state machines continue processing any
    suppressed repeats. The penny watcher retains repeat-after-cooldown behavior.
@@ -198,6 +200,12 @@ automatic set: disappeared candidates are ejected, while overlapping or manual
 symbols remain. `/unwatch` removes a symbol from the current gate; if it passes
 a future pre-screen it can be automatically selected again.
 
+The active strategy is selected from the registry supplied at startup.
+`/strategy` changes it through `WatchController`, which resets incompatible
+history and armed state, restarts an active feed, and atomically persists the
+name in `alertengine/data/active_strategy.txt`. Production mirrors that file to
+the private S3 overlay and restores it before the service starts.
+
 `/stop confirm:true` stops market streaming only. The Discord bot and systemd
 service remain online, the watchlist remains intact, and `/start` resumes it.
 
@@ -230,9 +238,8 @@ Both the systemd job and Discord background job are capped at five minutes.
 
 ## The swappable seams
 
-`alertengine/interfaces.py` retains the four original adapter boundaries, adds
-one range-based historical-data boundary, and includes one optional
-strategy-confirmation extension:
+`alertengine/interfaces.py` retains the four original adapter boundaries and
+adds range-based historical-data and strategy-confirmation extensions:
 
 ```python
 class Screener:
@@ -252,15 +259,18 @@ class AlertRule:
 class ConfirmationRule:
     def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None: ...
 
+class ArmedTriggerRule:
+    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None: ...
+
 class Notifier:
     async def send(self, alert: Alert) -> None: ...
 ```
 
-`ConfirmationRule` is absent by default, preserving the public two-green BUY
-behavior. A private settings override can inject one without putting its logic
-in tracked code. `__main__.py` is the composition root: it chooses concrete
-implementations and constructs the engine. `CandidateSink` is a separate,
-batch-only seam inside `prescreen/sinks.py`.
+`StrategyConfig` groups these rule seams with the bar interval and arm timeout.
+The public strategy is always registered; private settings may add selectable
+strategies without putting their logic in tracked code. `__main__.py` is the
+composition root that builds this registry and constructs the engine.
+`CandidateSink` is a separate, batch-only seam inside `prescreen/sinks.py`.
 
 ## Production deployment
 
@@ -294,8 +304,9 @@ Security and operations:
 - EC2 uses an instance role and IMDSv2; GitHub Actions uses OIDC, so neither
   path stores AWS access keys;
 - SSM Parameter Store holds runtime credentials/IDs; the private S3 bucket holds
-  private strategy files, curated watchlists, and refreshable Robinhood OAuth
-  state; the token file is mode `0600` and never enters git;
+  private strategy files, the active-strategy selection, curated watchlists,
+  and refreshable Robinhood OAuth state; the token file is mode `0600` and never
+  enters git;
 - structured JSON application logs remain available in systemd `journald` and
   are also shipped by the CloudWatch agent into per-instance `engine` and
   `prescreen` streams with 14-day retention;
@@ -316,6 +327,7 @@ their separate private S3 objects.
 | Alpaca websocket exits/errors | propagate to `WatchController`; retry with a fresh client after 10 seconds |
 | Historical Alpaca request times out/connects poorly | bounded connect/read timeouts and one retry, in 20-symbol batches |
 | Watchlist changes | cancel old watch task with a bound, clear partial aggregator buckets, resubscribe |
+| Strategy changes | validate the registered name, clear incompatible strategy state, persist the choice, and restart an active subscription |
 | Discord `/prescreen` runs long | child process killed after five minutes; bot/watcher stay responsive |
 | Scheduled pre-screen runs long | systemd kills the oneshot after five minutes |
 | Engine repeatedly crashes | systemd stops after its start limit and triggers SNS failure notification |
@@ -329,7 +341,7 @@ their separate private S3 objects.
 |---|---|
 | Change private thresholds/window | git-ignored `alertengine/settings_local.py` |
 | Change public defaults | `alertengine/settings.py` |
-| Add an alert strategy | implement `AlertRule`, wire it in `__main__.py` |
+| Add an alert strategy | implement the rule seams and register a `StrategyConfig` in private settings |
 | Change command behavior | `discord_bot.py` and/or `repl.py` |
 | Change subscription lifecycle | `watch_controller.py` |
 | Change bar construction | `aggregator.py` and `tests/test_aggregator.py` |

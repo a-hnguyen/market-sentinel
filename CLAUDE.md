@@ -25,8 +25,9 @@ design.
   (`alertengine/interfaces.py`) plus the `ApprovalGate`. Don't merge
   or rename them to "simplify"; swapping mock→real (Alpaca/yfinance) and adding a
   dashboard/IBKR later depends on these boundaries staying intact.
-- `ConfirmationRule` is an optional post-pattern BUY gate. The tracked engine
-  supports it generically; actual private checks and parameters must remain in
+- `ConfirmationRule` is an optional post-pattern BUY gate. `ArmedTriggerRule`
+  can instead replace the candle pattern for either direction. The tracked engine
+  supports both generically; actual private checks and parameters must remain in
   the ignored private layer. With no injected rule, public behavior is unchanged.
 - **Build incrementally.** Don't one-shot the app.
   The aggregator is the one place a silent bug poisons everything downstream —

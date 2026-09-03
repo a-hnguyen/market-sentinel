@@ -4,12 +4,9 @@ The engine owns everything stateful: per-symbol 2-min bar history (from the
 aggregator) and the de-dup/cooldown "armed" state, so the AlertRule can stay
 stateless and swappable.
 
-Each symbol runs one or two identical confirmation machines over its shared bar
-history: a **long** machine (oversold setup -> two green closes -> BUY) and,
-when an exit rule is supplied, an independent **short** machine (overbought
-setup -> two red closes -> SELL). They are mirror images — same arm/confirm/
-timeout/cooldown transitions, only the setup rule and the confirming-close
-direction differ.
+Each symbol runs one or two confirmation machines over shared bar history. The
+public defaults confirm long setups with green closes and short setups with red
+closes. An optional per-direction armed trigger can replace the candle pattern.
 """
 
 import asyncio
@@ -23,8 +20,16 @@ from . import settings
 from .aggregator import BarAggregator
 from .alert_window import AlertWindow
 from .gate import ApprovalGate
-from .interfaces import AlertRule, ConfirmationRule, DataFeed, Notifier, Screener
+from .interfaces import (
+    AlertRule,
+    ArmedTriggerRule,
+    ConfirmationRule,
+    DataFeed,
+    Notifier,
+    Screener,
+)
 from .models import Alert, Bar, Candidate
+from .strategy import StrategyConfig
 
 _LOG = logging.getLogger("alertengine.engine")
 
@@ -33,7 +38,7 @@ class Phase(Enum):
     """A confirmation machine is always in exactly one of these."""
 
     WAITING = "waiting"  # watching for the setup
-    ARMED = "armed"  # setup hit; hunting for 2 consecutive confirming closes
+    ARMED = "armed"  # setup hit; waiting for the configured confirmation
     COOLDOWN = "cooldown"  # just alerted/timed out; suppressed until setup clears
 
 
@@ -41,15 +46,16 @@ class Phase(Enum):
 class _DirectionMachine:
     """One arm->confirm->timeout->cooldown state machine for a single direction.
 
-    `long=True` hunts green closes after an oversold setup (BUY); `long=False`
-    hunts red closes after an overbought setup (SELL). Everything else — the
-    transitions, timeout, and cooldown — is identical.
+    The default confirmation uses green closes for long and red closes for short.
+    A configured armed trigger replaces that pattern. State transitions remain
+    identical for both directions.
     """
 
     confirm_bars: int
     arm_timeout_bars: int
     cooldown_bars: int
     long: bool
+    fire_rule: str
     phase: Phase = Phase.WAITING
     consecutive: int = 0  # progress toward the two-close confirmation
     bars_since_arm: int = 0  # timeout counter while ARMED
@@ -75,10 +81,6 @@ class _DirectionMachine:
     @property
     def fire_kind(self) -> str:
         return "buy" if self.long else "sell"
-
-    @property
-    def fire_rule(self) -> str:
-        return "bb_rsi_buy" if self.long else "bb_rsi_sell"
 
 
 @dataclass
@@ -110,26 +112,47 @@ class AlertEngine:
         window_end: str = settings.WINDOW_END,
         alert_timezone: str = settings.ALERT_TIMEZONE,
         buy_confirmation_rule: ConfirmationRule | None = None,
+        buy_trigger_rule: ArmedTriggerRule | None = None,
+        sell_trigger_rule: ArmedTriggerRule | None = None,
+        buy_fire_rule: str = "bb_rsi_buy",
+        sell_fire_rule: str = "bb_rsi_sell",
         bar_interval_minutes: int = 2,
         notify_once_per_kind_per_day: bool = False,
+        strategies: dict[str, StrategyConfig] | None = None,
+        strategy_name: str = "default",
     ) -> None:
         self.screener = screener
         self.feed = feed
-        self.rule = rule
-        self.exit_rule = exit_rule
         self.notifier = notifier
         self.gate = gate
         self.cooldown_bars = cooldown_bars
         self.confirm_green_bars = confirm_green_bars
         self.confirm_red_bars = confirm_red_bars
-        self.arm_timeout_bars = arm_timeout_bars
         self.max_history = max_history
-        self.buy_confirmation_rule = buy_confirmation_rule
-        self.bar_interval_minutes = bar_interval_minutes
         self.notify_once_per_kind_per_day = notify_once_per_kind_per_day
         self._alert_window = AlertWindow.from_strings(
             window_start, window_end, alert_timezone
         )
+
+        fallback = StrategyConfig(
+            name=strategy_name,
+            rule=rule,
+            exit_rule=exit_rule,
+            buy_confirmation_rule=buy_confirmation_rule,
+            buy_trigger_rule=buy_trigger_rule,
+            sell_trigger_rule=sell_trigger_rule,
+            buy_fire_rule=buy_fire_rule,
+            sell_fire_rule=sell_fire_rule,
+            bar_interval_minutes=bar_interval_minutes,
+            arm_timeout_bars=arm_timeout_bars,
+        )
+        self._strategies = dict(strategies or {strategy_name: fallback})
+        if strategy_name not in self._strategies:
+            raise ValueError(f"unknown strategy: {strategy_name}")
+        if any(name != strategy.name for name, strategy in self._strategies.items()):
+            raise ValueError("strategy registry keys must match strategy names")
+        self.strategy_name = strategy_name
+        self._apply_strategy(self._strategies[strategy_name])
 
         self._agg = BarAggregator(self.bar_interval_minutes)
         self._states: dict[str, _SymbolState] = {}
@@ -142,6 +165,44 @@ class AlertEngine:
         self._candidates: dict[str, Candidate] = {}
         self.watching = False
 
+    @property
+    def available_strategies(self) -> list[str]:
+        return sorted(self._strategies)
+
+    def select_strategy(self, name: str) -> bool:
+        value = name.strip().lower()
+        if value not in self._strategies:
+            available = ", ".join(self.available_strategies)
+            raise ValueError(f"unknown strategy {name!r}; available: {available}")
+        if value == self.strategy_name:
+            return False
+
+        previous = self.strategy_name
+        self.strategy_name = value
+        self._apply_strategy(self._strategies[value])
+        self._states.clear()
+        self._agg = BarAggregator(self.bar_interval_minutes)
+        _LOG.info(
+            "event=strategy_changed previous=%s current=%s "
+            "bar_interval_minutes=%d arm_timeout_bars=%d",
+            previous,
+            value,
+            self.bar_interval_minutes,
+            self.arm_timeout_bars,
+        )
+        return True
+
+    def _apply_strategy(self, strategy: StrategyConfig) -> None:
+        self.rule = strategy.rule
+        self.exit_rule = strategy.exit_rule
+        self.buy_confirmation_rule = strategy.buy_confirmation_rule
+        self.buy_trigger_rule = strategy.buy_trigger_rule
+        self.sell_trigger_rule = strategy.sell_trigger_rule
+        self.buy_fire_rule = strategy.buy_fire_rule
+        self.sell_fire_rule = strategy.sell_fire_rule
+        self.bar_interval_minutes = strategy.bar_interval_minutes
+        self.arm_timeout_bars = strategy.arm_timeout_bars
+
     def _new_state(self) -> _SymbolState:
         """Build a symbol's machines from the engine's tunables. The short (SELL)
         machine only exists when an exit rule is wired."""
@@ -150,6 +211,7 @@ class AlertEngine:
             arm_timeout_bars=self.arm_timeout_bars,
             cooldown_bars=self.cooldown_bars,
             long=True,
+            fire_rule=self.buy_fire_rule,
         )
         short = None
         if self.exit_rule is not None:
@@ -158,6 +220,7 @@ class AlertEngine:
                 arm_timeout_bars=self.arm_timeout_bars,
                 cooldown_bars=self.cooldown_bars,
                 long=False,
+                fire_rule=self.sell_fire_rule,
             )
         return _SymbolState(long=long, short=short)
 
@@ -273,9 +336,8 @@ class AlertEngine:
             self._reset_machines(state)
             return
 
-        # The setup rules only *arm* their machine — the final alert fires on the
-        # two-close confirmation, not here. Evaluate long always, short only when
-        # an exit rule is wired.
+        # Setup rules only arm their machine; the configured confirmation fires
+        # the final alert. Evaluate short only when an exit rule is wired.
         long_setup = self.rule.evaluate(bar.symbol, state.history)
         await self._step(state, state.long, bar, long_setup)
 
@@ -305,8 +367,7 @@ class AlertEngine:
             self._advance_cooldown(machine, signal, bar.symbol)
 
     async def _arm(self, machine: _DirectionMachine, bar: Bar, setup: Alert) -> None:
-        """WAITING -> ARMED: fire a WATCH alert and start the two-close
-        hunt. The arming bar itself does NOT count toward the confirmation."""
+        """WAITING -> ARMED: fire a WATCH alert and await confirmation."""
         setup.kind = machine.watch_kind
         self._enrich(setup, bar.symbol)
         await self._notify(setup)
@@ -325,6 +386,26 @@ class AlertEngine:
         self, state: _SymbolState, machine: _DirectionMachine, bar: Bar
     ) -> None:
         machine.bars_since_arm += 1
+        trigger_rule = self._armed_trigger_rule(machine)
+        if trigger_rule is not None:
+            result = trigger_rule.evaluate(bar.symbol, state.history)
+            _LOG.info(
+                "event=armed_trigger_evaluation symbol=%s direction=%s "
+                "passed=%s bars_since_arm=%d close=%.4f bar_time=%s",
+                bar.symbol,
+                "buy" if machine.long else "sell",
+                result is not None,
+                machine.bars_since_arm,
+                bar.close,
+                bar.timestamp.isoformat(),
+            )
+            if result is not None:
+                await self._fire(machine, bar, result, armed_trigger=True)
+                return
+            if machine.bars_since_arm >= machine.arm_timeout_bars:
+                self._timeout(state, machine, bar.symbol)
+            return
+
         if machine.is_confirm_close(bar):
             machine.consecutive += 1
         else:  # a non-confirming close breaks the streak (must be *consecutive*)
@@ -352,7 +433,7 @@ class AlertEngine:
                     return
                 _LOG.info(
                     "event=confirmation_blocked symbol=%s direction=buy "
-                    "reason=macd_or_ema close=%.4f bar_time=%s",
+                    "reason=post_pattern_gate close=%.4f bar_time=%s",
                     bar.symbol,
                     bar.close,
                     bar.timestamp.isoformat(),
@@ -368,9 +449,13 @@ class AlertEngine:
         machine: _DirectionMachine,
         bar: Bar,
         confirmation_context: dict[str, float] | None = None,
+        armed_trigger: bool = False,
     ) -> None:
         """ARMED -> COOLDOWN: the setup confirmed; fire BUY/SELL."""
-        if machine.long:
+        if armed_trigger:
+            action = "BUY NOW" if machine.long else "SELL NOW"
+            message = f"{action} {bar.symbol}: armed trigger confirmed (close {bar.close:.2f})"
+        elif machine.long:
             message = (
                 f"BUY {bar.symbol}: confirmation passed after "
                 f"{machine.consecutive} consecutive green "
@@ -404,6 +489,11 @@ class AlertEngine:
         )
         machine.phase = Phase.COOLDOWN
         machine.bars_since_alert = 0
+
+    def _armed_trigger_rule(
+        self, machine: _DirectionMachine
+    ) -> ArmedTriggerRule | None:
+        return self.buy_trigger_rule if machine.long else self.sell_trigger_rule
 
     async def _notify(self, alert: Alert) -> bool:
         """Deliver an alert unless its symbol/kind already fired that local day."""
@@ -479,6 +569,10 @@ class AlertEngine:
     def status(self) -> dict:
         return {
             "watching": self.watching,
+            "strategy": self.strategy_name,
+            "available_strategies": self.available_strategies,
+            "bar_interval_minutes": self.bar_interval_minutes,
+            "arm_timeout_bars": self.arm_timeout_bars,
             "alert_window": {
                 "timezone": self._alert_window.timezone.key,
                 "start": self._alert_window.start.strftime("%H:%M"),

@@ -50,7 +50,7 @@ infra/
 | **EC2** | Always-on box running the Alpaca websocket, Robinhood poller, and Discord bot | core |
 | **IAM** | Least-priv instance role; no static keys anywhere | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
-| **S3** | Private strategy overlay, both manual watchlists, and Robinhood OAuth persistence | core |
+| **S3** | Private strategy overlay, active-strategy selection, both manual watchlists, and Robinhood OAuth persistence | core |
 | **CloudWatch** | EC2 status alarm, Lambda logs, and 14-day structured application logs | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |

@@ -32,6 +32,46 @@ from .notifiers.console_notifier import ConsoleNotifier
 from .repl import run
 from .rules.bb_rsi_exit_rule import BBRSIExitRule
 from .rules.bb_rsi_rule import BBRSIRule
+from .strategy import StrategyConfig
+
+
+def _strategy_registry() -> tuple[dict[str, StrategyConfig], str]:
+    public = StrategyConfig(
+        name="bb-rsi",
+        rule=BBRSIRule(),
+        exit_rule=BBRSIExitRule(),
+        bar_interval_minutes=2,
+        arm_timeout_bars=settings.ARM_TIMEOUT_BARS,
+    )
+    strategies = {public.name: public}
+    configured = getattr(settings, "STRATEGIES", {})
+    if configured:
+        strategies.update(configured)
+        default_name = public.name
+    elif getattr(settings, "BUY_SETUP_RULE", None) is not None:
+        legacy = StrategyConfig(
+            name="private",
+            rule=settings.BUY_SETUP_RULE,
+            exit_rule=getattr(settings, "SELL_SETUP_RULE", None),
+            buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
+            buy_trigger_rule=getattr(settings, "BUY_TRIGGER_RULE", None),
+            sell_trigger_rule=getattr(settings, "SELL_TRIGGER_RULE", None),
+            buy_fire_rule=getattr(settings, "BUY_FIRE_RULE", "private_buy"),
+            sell_fire_rule=getattr(settings, "SELL_FIRE_RULE", "private_sell"),
+            bar_interval_minutes=getattr(settings, "BAR_INTERVAL_MINUTES", 2),
+            arm_timeout_bars=settings.ARM_TIMEOUT_BARS,
+        )
+        strategies[legacy.name] = legacy
+        default_name = legacy.name
+    else:
+        default_name = public.name
+    active = getattr(settings, "ACTIVE_STRATEGY", default_name)
+    if active not in strategies:
+        available = ", ".join(sorted(strategies))
+        raise RuntimeError(
+            f"unknown active strategy {active!r}; available: {available}"
+        )
+    return strategies, active
 
 
 def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
@@ -57,15 +97,18 @@ def build_engine(live: bool = False, replay: bool = False) -> AlertEngine:
         # Small interval so bars stream visibly in the REPL rather than instantly.
         feed = MockFeed(symbols=["MOCK", "TESTA"], interval=0.2)
 
+    strategies, strategy_name = _strategy_registry()
+    strategy = strategies[strategy_name]
     return AlertEngine(
         screener=screener,
         feed=feed,
-        rule=BBRSIRule(),
-        exit_rule=BBRSIExitRule(),  # SELL side: overbought -> two red closes
+        rule=strategy.rule,
+        exit_rule=strategy.exit_rule,
         notifier=ConsoleNotifier(),
         gate=ApprovalGate(),
-        buy_confirmation_rule=getattr(settings, "BUY_CONFIRMATION_RULE", None),
         notify_once_per_kind_per_day=settings.NOTIFY_ONCE_PER_KIND_PER_DAY,
+        strategies=strategies,
+        strategy_name=strategy_name,
     )
 
 

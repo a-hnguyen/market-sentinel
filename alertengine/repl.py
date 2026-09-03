@@ -7,7 +7,8 @@ Commands:
   prescreen              re-run the post-close pre-screen and replace candidates
   load [path]            approve tickers from the pre-screen's candidates CSV
   watchlist              show approved symbols
-  watch                  start the 2-min watch loop (background)
+  strategy [name]        show or switch the alert strategy
+  watch                  start the watch loop (background)
   stop                   stop the watch loop
   status                 connection/bars/armed state
   help                   show commands
@@ -51,6 +52,7 @@ def _approve_from_file(engine: AlertEngine, path: str) -> list[str]:
 async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
     print("Trading alert engine. Type 'help' for commands.")
     controller = WatchController(engine)
+    controller.load_strategy()
 
     # Auto-approve the post-close pre-screen's survivors on startup, if present,
     # so the watchlist is pre-seeded without any manual 'approve' typing. Only in
@@ -137,6 +139,19 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
 
         elif cmd == "watchlist":
             print(", ".join(engine.gate.watchlist()) or "(empty)")
+
+        elif cmd == "strategy":
+            if not args:
+                print("active:", engine.strategy_name)
+                print("available:", ", ".join(engine.available_strategies))
+            else:
+                try:
+                    active, changed = await controller.select_strategy(args[0])
+                except ValueError as exc:
+                    print(exc)
+                else:
+                    action = "switched to" if changed else "already using"
+                    print(f"{action}: {active}")
 
         elif cmd == "watch":
             if controller.running:

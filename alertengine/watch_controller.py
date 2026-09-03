@@ -27,6 +27,8 @@ class WatchController:
         *,
         manual_watchlist_path: str | None = None,
         manual_s3_uri: str | None = None,
+        strategy_path: str | None = None,
+        strategy_s3_uri: str | None = None,
         task_name: str = "market-watch",
         log_name: str = "alertengine.watch",
     ) -> None:
@@ -45,9 +47,16 @@ class WatchController:
             if manual_s3_uri is None
             else manual_s3_uri
         ).strip()
+        self._strategy_path = Path(strategy_path or settings.ACTIVE_STRATEGY_PATH)
+        self._strategy_s3_uri = (
+            os.environ.get("ACTIVE_STRATEGY_S3_URI", "")
+            if strategy_s3_uri is None
+            else strategy_s3_uri
+        ).strip()
         self._task_name = task_name
         self._aws_region = os.environ.get("AWS_REGION", "").strip()
         self._persistence_error: str | None = None
+        self._strategy_persistence_error: str | None = None
         self._active_symbols: tuple[str, ...] = ()
         self._log = logging.getLogger(log_name)
 
@@ -72,6 +81,13 @@ class WatchController:
         return {
             "s3_configured": bool(self._manual_s3_uri),
             "last_error": self._persistence_error,
+        }
+
+    @property
+    def strategy_persistence_status(self) -> dict[str, str | bool | None]:
+        return {
+            "s3_configured": bool(self._strategy_s3_uri),
+            "last_error": self._strategy_persistence_error,
         }
 
     @staticmethod
@@ -114,6 +130,16 @@ class WatchController:
         )
         return sorted(set(symbols))
 
+    def load_strategy(self) -> str:
+        if not self._strategy_path.exists():
+            return self.engine.strategy_name
+        name = self._strategy_path.read_text(encoding="utf-8").strip()
+        try:
+            self.engine.select_strategy(name)
+        except ValueError as exc:
+            self._log.warning("ignoring invalid persisted strategy: %s", exc)
+        return self.engine.strategy_name
+
     def load_automatic(self, symbols: list[str]) -> list[str]:
         self._automatic = {self.normalize(symbol) for symbol in symbols}
         if self._automatic:
@@ -126,12 +152,7 @@ class WatchController:
 
     async def _save_manual(self) -> None:
         path = self._manual_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(f"{path.suffix}.tmp")
-        temporary.write_text(
-            "".join(f"{s}\n" for s in sorted(self._manual)), encoding="utf-8"
-        )
-        temporary.replace(path)
+        self._write_atomic(path, "".join(f"{s}\n" for s in sorted(self._manual)))
         if not self._manual_s3_uri:
             self._persistence_error = None
             self._log.info(
@@ -139,7 +160,51 @@ class WatchController:
                 ",".join(sorted(self._manual)),
             )
             return
-        command = ["aws", "s3", "cp", str(path), self._manual_s3_uri]
+        self._persistence_error = await self._upload(path, self._manual_s3_uri)
+        if self._persistence_error is None:
+            self._log.info(
+                "event=manual_watchlist_persisted symbols=%s destination=s3",
+                ",".join(sorted(self._manual)),
+            )
+        else:
+            self._log.error(
+                "manual watchlist saved locally but S3 upload failed: %s",
+                self._persistence_error,
+            )
+
+    async def _save_strategy(self) -> None:
+        path = self._strategy_path
+        self._write_atomic(path, f"{self.engine.strategy_name}\n")
+        if not self._strategy_s3_uri:
+            self._strategy_persistence_error = None
+            self._log.info(
+                "event=strategy_persisted strategy=%s destination=local",
+                self.engine.strategy_name,
+            )
+            return
+        self._strategy_persistence_error = await self._upload(
+            path, self._strategy_s3_uri
+        )
+        if self._strategy_persistence_error is None:
+            self._log.info(
+                "event=strategy_persisted strategy=%s destination=s3",
+                self.engine.strategy_name,
+            )
+        else:
+            self._log.error(
+                "strategy saved locally but S3 upload failed: %s",
+                self._strategy_persistence_error,
+            )
+
+    @staticmethod
+    def _write_atomic(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+
+    async def _upload(self, path: Path, s3_uri: str) -> str | None:
+        command = ["aws", "s3", "cp", str(path), s3_uri]
         if self._aws_region:
             command.extend(["--region", self._aws_region])
         try:
@@ -151,18 +216,9 @@ class WatchController:
                 text=True,
                 timeout=20,
             )
-            self._persistence_error = None
-            self._log.info(
-                "event=manual_watchlist_persisted symbols=%s destination=s3",
-                ",".join(sorted(self._manual)),
-            )
         except (OSError, subprocess.SubprocessError) as exc:
-            detail = getattr(exc, "stderr", "") or str(exc)
-            self._persistence_error = detail.strip()
-            self._log.error(
-                "manual watchlist saved locally but S3 upload failed: %s",
-                self._persistence_error,
-            )
+            return (getattr(exc, "stderr", "") or str(exc)).strip()
+        return None
 
     async def start(self) -> list[str]:
         async with self._lock:
@@ -181,6 +237,14 @@ class WatchController:
             self._enabled = False
             await self._cancel_task()
             self._log.info("event=watch_disabled")
+
+    async def select_strategy(self, name: str) -> tuple[str, bool]:
+        async with self._lock:
+            changed = self.engine.select_strategy(name)
+            if changed and self.running:
+                await self._restart_task()
+            await self._save_strategy()
+            return self.engine.strategy_name, changed
 
     async def watch(self, symbol: str) -> tuple[str, list[str]]:
         value = self.normalize(symbol)

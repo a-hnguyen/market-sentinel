@@ -59,6 +59,7 @@ Deploy/start the EC2 service, then use the private channel:
 ```text
 /watch AAPL MSFT
 /watchlist
+/strategy
 /status AAPL
 /unwatch AAPL MSFT
 ```
@@ -73,7 +74,7 @@ online: it would create a second Gateway client for the same control bot. Local
 replay should use the normal console REPL (`python -m alertengine --replay`).
 
 Available commands: `/watch`, `/unwatch`, `/watchlist`, `/status`, `/screen`,
-`/prescreen`, `/start`, `/stop confirm:true`, and `/help`.
+`/prescreen`, `/strategy [NAME]`, `/start`, `/stop confirm:true`, and `/help`.
 
 If the optional Robinhood watcher is enabled, the bot also registers
 `/penny-watch`, `/penny-unwatch`, `/penny-watchlist`, `/penny-status`,
@@ -90,13 +91,17 @@ persisted watchlist and do not affect the regular Alpaca watcher.
   can return after a restart.
 - `/stop confirm:true` stops only market streaming; Discord stays online and
   `/start` resumes the existing watchlist.
+- `/strategy` shows the active and available strategies. `/strategy NAME`
+  switches the live watcher, clears incompatible bar/armed state, restarts the
+  subscription, and persists the choice locally and to the private S3 overlay.
 - `/prescreen` responds immediately, scans in a background child process, and
   posts separately labeled 4-hour, 1-hour, and final-intersection lists for
   oversold (`RSI < 30`) and overbought (`RSI > 70`) candidates, followed by the
   combined automatic watchlist and additions/removals. A second request is
   rejected while one is running.
-- `/status` includes watcher state, per-symbol state, and whether the configured
-  Pacific alert window is currently open. It also separates automatic
-  pre-screen symbols from explicit manual `/watch` symbols.
+- `/status` includes watcher state, active strategy, aggregation interval,
+  per-symbol state, and whether the configured Pacific alert window is currently
+  open. It also separates automatic pre-screen symbols from explicit manual
+  `/watch` symbols.
 - Alerts based on bars before the 6:30 AM Pacific regular-session open are
   prefixed `PREMARKET` so extended-hours signals are unambiguous.

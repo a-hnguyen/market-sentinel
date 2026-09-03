@@ -14,7 +14,13 @@ from typing import AsyncIterator
 
 from alertengine.engine import AlertEngine
 from alertengine.gate import ApprovalGate
-from alertengine.interfaces import AlertRule, ConfirmationRule, DataFeed, Notifier
+from alertengine.interfaces import (
+    AlertRule,
+    ArmedTriggerRule,
+    ConfirmationRule,
+    DataFeed,
+    Notifier,
+)
 from alertengine.models import Alert, Bar
 from alertengine.screeners.mock_screener import MockScreener
 
@@ -67,11 +73,21 @@ class ScriptedConfirmationRule(ConfirmationRule):
         return next(self._results)
 
 
-def _bar(i, green, symbol="ZZ", *, interpolated=False):
+class ScriptedTriggerRule(ArmedTriggerRule):
+    def __init__(self, results):
+        self._results = iter(results)
+        self.calls = 0
+
+    def evaluate(self, symbol, bars):
+        self.calls += 1
+        return next(self._results)
+
+
+def _bar(i, green, symbol="ZZ", *, interpolated=False, interval_minutes=2):
     o, c = 100.0, (101.0 if green else 99.0)
     return Bar(
         symbol,
-        BASE + timedelta(minutes=2 * i),
+        BASE + timedelta(minutes=interval_minutes * i),
         o,
         max(o, c),
         min(o, c),
@@ -280,3 +296,57 @@ def test_daily_delivery_limit_suppresses_repeat_kinds_until_next_pacific_day():
     asyncio.run(_feed(e, next_bars))
 
     assert _kinds(n) == ["watch", "buy", "watch", "buy"]
+
+
+def test_armed_trigger_replaces_green_candle_confirmation():
+    n = _Rec()
+    trigger = ScriptedTriggerRule([None, {"trigger_value": 20.1}])
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        buy_trigger_rule=trigger,
+        buy_fire_rule="stochastic_buy",
+    )
+
+    asyncio.run(_feed(e, [_bar(0, False), _bar(1, False), _bar(2, False)]))
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert trigger.calls == 2
+    assert n.alerts[-1].rule == "stochastic_buy"
+    assert n.alerts[-1].message.startswith("BUY NOW")
+    assert n.alerts[-1].context["trigger_value"] == 20.1
+
+
+def test_armed_trigger_can_fire_on_final_minute_of_timeout_window():
+    n = _Rec()
+    trigger = ScriptedTriggerRule([None] * 14 + [{"trigger_value": 20.1}])
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        buy_trigger_rule=trigger,
+        bar_interval_minutes=1,
+        arm_timeout_bars=15,
+    )
+
+    asyncio.run(_feed(e, [_bar(i, False, interval_minutes=1) for i in range(16)]))
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert trigger.calls == 15
+
+
+def test_armed_trigger_expires_after_fifteen_one_minute_bars():
+    n = _Rec()
+    trigger = ScriptedTriggerRule([None] * 15)
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        buy_trigger_rule=trigger,
+        bar_interval_minutes=1,
+        arm_timeout_bars=15,
+    )
+
+    asyncio.run(_feed(e, [_bar(i, False, interval_minutes=1) for i in range(17)]))
+
+    assert _kinds(n) == ["watch"]
+    assert trigger.calls == 15
+    assert e.status()["symbols"]["ZZ"]["phase"] == "waiting"

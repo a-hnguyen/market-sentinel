@@ -54,6 +54,14 @@ class ConfirmationRule(ABC):
         """Return alert context when confirmation passes, otherwise None."""
 
 
+class ArmedTriggerRule(ABC):
+    """Optional rule that replaces candle confirmation after a setup arms."""
+
+    @abstractmethod
+    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None:
+        """Return alert context when the armed trigger passes, otherwise None."""
+
+
 class Notifier(ABC):
     @abstractmethod
     async def send(self, alert: Alert) -> None:

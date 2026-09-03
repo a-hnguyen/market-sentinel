@@ -9,6 +9,7 @@ from alertengine.gate import ApprovalGate
 from alertengine.interfaces import AlertRule, DataFeed, Notifier
 from alertengine.models import Alert, Bar
 from alertengine.screeners.mock_screener import MockScreener
+from alertengine.strategy import StrategyConfig
 from alertengine.watch_controller import WatchController
 
 
@@ -39,6 +40,20 @@ def _engine(feed):
         rule=_Rule(),
         notifier=_Notifier(),
         gate=ApprovalGate(),
+    )
+
+
+def _strategy_engine(feed):
+    slow = StrategyConfig(name="slow", rule=_Rule(), bar_interval_minutes=2)
+    fast = StrategyConfig(name="fast", rule=_Rule(), bar_interval_minutes=1)
+    return AlertEngine(
+        screener=MockScreener(),
+        feed=feed,
+        rule=slow.rule,
+        notifier=_Notifier(),
+        gate=ApprovalGate(),
+        strategies={"slow": slow, "fast": fast},
+        strategy_name="slow",
     )
 
 
@@ -271,3 +286,88 @@ def test_invalid_symbol_is_rejected(tmp_path, monkeypatch):
             raise AssertionError("invalid symbol accepted")
 
     asyncio.run(drive())
+
+
+def test_strategy_switch_persists_and_restarts_active_subscription(tmp_path):
+    async def drive():
+        feed = _Feed()
+        engine = _strategy_engine(feed)
+        engine.gate.approve("AAPL")
+        path = tmp_path / "strategy.txt"
+        controller = WatchController(
+            engine,
+            strategy_path=str(path),
+            strategy_s3_uri="",
+        )
+        await controller.start()
+        await asyncio.sleep(0)
+
+        active, changed = await controller.select_strategy("fast")
+        await asyncio.sleep(0)
+
+        assert (active, changed) == ("fast", True)
+        assert path.read_text() == "fast\n"
+        assert feed.subscriptions == [["AAPL"], ["AAPL"]]
+        await controller.stop()
+
+    asyncio.run(drive())
+
+
+def test_persisted_strategy_is_loaded_on_startup(tmp_path):
+    path = tmp_path / "strategy.txt"
+    path.write_text("fast\n")
+    controller = WatchController(
+        _strategy_engine(_Feed()),
+        strategy_path=str(path),
+        strategy_s3_uri="",
+    )
+
+    assert controller.load_strategy() == "fast"
+    assert controller.engine.bar_interval_minutes == 1
+
+
+def test_invalid_persisted_strategy_keeps_configured_default(tmp_path, caplog):
+    path = tmp_path / "strategy.txt"
+    path.write_text("missing\n")
+    controller = WatchController(
+        _strategy_engine(_Feed()),
+        strategy_path=str(path),
+        strategy_s3_uri="",
+    )
+
+    assert controller.load_strategy() == "slow"
+    assert "ignoring invalid persisted strategy" in caplog.text
+
+
+def test_strategy_switch_uploads_selection_when_configured(tmp_path, monkeypatch):
+    path = tmp_path / "strategy.txt"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs, path.read_text()))
+
+    monkeypatch.setattr("alertengine.watch_controller.subprocess.run", fake_run)
+
+    async def drive():
+        controller = WatchController(
+            _strategy_engine(_Feed()),
+            strategy_path=str(path),
+            strategy_s3_uri="s3://private-bucket/private/runtime/active_strategy.txt",
+        )
+        await controller.select_strategy("fast")
+        assert controller.strategy_persistence_status == {
+            "s3_configured": True,
+            "last_error": None,
+        }
+
+    asyncio.run(drive())
+
+    assert calls[0][0] == [
+        "aws",
+        "s3",
+        "cp",
+        str(path),
+        "s3://private-bucket/private/runtime/active_strategy.txt",
+    ]
+    assert calls[0][1]["timeout"] == 20
+    assert calls[0][2] == "fast\n"
