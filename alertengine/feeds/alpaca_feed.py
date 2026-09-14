@@ -37,6 +37,7 @@ _HISTORICAL_BATCH_SIZE = 20
 _HISTORICAL_CONNECT_TIMEOUT = 5
 _HISTORICAL_READ_TIMEOUT = 45
 _HISTORICAL_ATTEMPTS = 2
+_BACKFILL_LOOKBACK_DAYS = 7
 _STREAM_CLOSE_TIMEOUT = 5
 _EASTERN = ZoneInfo("America/New_York")
 
@@ -120,7 +121,7 @@ class AlpacaFeed(DataFeed):
         )
 
     def backfill_bars(self, symbols: list[str], minutes: int = 180) -> list[Bar]:
-        """Recent 1-min bars (up to `minutes` back) over REST, for warm-up
+        """Latest `minutes` available 1-min bars per symbol, for warm-up
         seeding. The live websocket only emits going forward, so on (re)start the
         engine uses this to pre-fill its 2-min history — otherwise the rule waits
         ~40 min for a full Bollinger/RSI window to accumulate before it can fire.
@@ -131,10 +132,14 @@ class AlpacaFeed(DataFeed):
         Bars are merged across symbols in true chronological order, as the live
         stream would deliver them. Empty list if none exist (e.g. cold at open).
         """
+        if minutes <= 0:
+            return []
+
         end = datetime.now(timezone.utc)
-        start = end - timedelta(minutes=minutes)
+        start = end - timedelta(days=_BACKFILL_LOOKBACK_DAYS)
         bars: list[Bar] = []
-        batches = self._batches(symbols)
+        normalized = list(dict.fromkeys(symbol.upper() for symbol in symbols))
+        batches = self._batches(normalized)
         with self._historical_lock:
             for index, batch in enumerate(batches, 1):
                 print(
@@ -150,9 +155,12 @@ class AlpacaFeed(DataFeed):
                     feed=self._feed,
                 )
                 barset = self._request_bars(req, f"backfill batch {index}")
-                for sym in batch:
-                    for abar in barset.data.get(sym, []):
-                        bars.append(self._to_bar(abar))
+                for symbol in batch:
+                    recent = sorted(
+                        (self._to_bar(abar) for abar in barset.data.get(symbol, [])),
+                        key=lambda bar: bar.timestamp,
+                    )[-minutes:]
+                    bars.extend(recent)
         bars.sort(key=lambda b: b.timestamp)
         return bars
 

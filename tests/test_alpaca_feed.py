@@ -5,7 +5,7 @@ we cover the credential guard and the Alpaca-bar -> Bar mapping.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -149,10 +149,17 @@ class _FakeHistClient:
     def __init__(self, data):
         self._data = data
         self.request = None
+        self.requests = []
 
     def get_stock_bars(self, req):
         self.request = req
-        return SimpleNamespace(data=self._data)
+        self.requests.append(req)
+        requested = req.symbol_or_symbols
+        if isinstance(requested, str):
+            requested = [requested]
+        return SimpleNamespace(
+            data={symbol: self._data.get(symbol, []) for symbol in requested}
+        )
 
 
 def test_historical_session_applies_connect_and_read_timeout(monkeypatch):
@@ -184,8 +191,36 @@ def test_backfill_bars_maps_and_sorts_chronologically():
     assert [b.timestamp.minute for b in bars] == [30, 31, 32]
     assert [b.symbol for b in bars] == ["AAPL", "MSFT", "AAPL"]
     # Request was built for 1-min bars on the upper-cased symbols.
+    assert len(feed._hist.requests) == 1
+    assert set(feed._hist.request.symbol_or_symbols) == {"AAPL", "MSFT"}
+
+
+def test_backfill_bars_crosses_closed_days_and_keeps_latest_minutes():
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+    feed._hist = _FakeHistClient(
+        {
+            "AAPL": [
+                _abar("AAPL", 30, 1.0),
+                _abar("AAPL", 33, 4.0),
+                _abar("AAPL", 31, 2.0),
+                _abar("AAPL", 32, 3.0),
+            ]
+        }
+    )
+
+    bars = feed.backfill_bars(["AAPL"], minutes=2)
+
+    assert [bar.close for bar in bars] == [3.0, 4.0]
     req = feed._hist.request
-    assert set(req.symbol_or_symbols) == {"AAPL", "MSFT"}
+    assert req.end - req.start == timedelta(days=7)
+
+
+def test_backfill_bars_zero_minutes_short_circuits():
+    feed = AlpacaFeed(api_key="fake", secret_key="fake")
+    feed._hist = _FakeHistClient({"AAPL": [_abar("AAPL", 30, 1.0)]})
+
+    assert feed.backfill_bars(["AAPL"], minutes=0) == []
+    assert feed._hist.requests == []
 
 
 def test_backfill_bars_empty_when_no_data():

@@ -186,9 +186,10 @@ message remains visible but cannot be edited by the new process; its displayed
 expiration time still communicates when it became stale.
 
 REST backfill runs before a live subscription and seeds history without
-evaluating rules or sending alerts. It is a best-effort recent wall-clock
-lookback and may be empty off-hours; the engine then warms naturally from live
-bars.
+evaluating rules or sending alerts. It queries a seven-day calendar window,
+then retains only the latest bounded one-minute tail per symbol. That reaches
+the previous session across weekends and normal market holidays without
+letting old history grow unbounded.
 
 For Robinhood, gap-filled bars carry `interpolated=true`. They retain clock
 alignment for indicators, but a fully synthetic two-minute candle cannot arm a
