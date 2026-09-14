@@ -120,7 +120,7 @@ async def run(engine: AlertEngine, auto_approve: bool = False) -> None:
                 results = run_prescreen()
             except FileNotFoundError:
                 print(
-                    "watchlist not found; add the curated .xls/.csv "
+                    "watchlist not found; add the curated .xlsx/.csv "
                     f"at {settings.PRESCREEN_WATCHLIST_PATH!r}"
                 )
             except RuntimeError as e:  # needs Alpaca creds

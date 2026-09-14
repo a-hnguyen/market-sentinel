@@ -56,7 +56,7 @@ EventBridge Scheduler (3:00 PM America/Los_Angeles, weekdays)
              ▼
 Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
                                                    │
-                         curated watchlist.xls ─────┤
+                         curated watchlist.xlsx ────┤
                                                    ▼
                                       Alpaca historical REST
                                        regular session only

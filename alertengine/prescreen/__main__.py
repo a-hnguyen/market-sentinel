@@ -47,7 +47,7 @@ def main() -> int:
         log.exception("event=prescreen_failed reason=watchlist_missing")
         print(
             f"watchlist not found at {settings.PRESCREEN_WATCHLIST_PATH!r} — "
-            "put the curated .xls/.csv there (git-ignored)."
+            "put the curated .xlsx/.csv there (git-ignored)."
         )
         return 1
     except RuntimeError as e:  # missing Alpaca credentials

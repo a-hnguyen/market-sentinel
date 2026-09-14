@@ -12,7 +12,7 @@ import pandas as pd
 def read_watchlist(path: str) -> list[tuple[str, str]]:
     """Return [(TICKER, category), ...], de-duplicated on ticker (first wins).
 
-    Accepts .xls/.xlsx/.csv. Requires a "Ticker" column; a "List" column is used
+    Accepts .xlsx/.csv. Requires a "Ticker" column; a "List" column is used
     for the category if present, else "". Blank/NaN tickers are skipped.
     """
     if path.lower().endswith(".csv"):

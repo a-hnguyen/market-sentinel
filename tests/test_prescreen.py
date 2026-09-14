@@ -161,9 +161,9 @@ def test_run_empty_watchlist_makes_no_calls():
 # --- watchlist reader ------------------------------------------------------
 
 
-# The dedup/uppercase/blank/category logic is shared across .csv and .xls (it
+# The dedup/uppercase/blank/category logic is shared across .csv and .xlsx (it
 # runs after pandas reads either), so it's exercised via CSV — no Excel-writer
-# dependency needed. A separate smoke test covers the real .xls read path.
+# dependency needed. A separate smoke test covers the real .xlsx read path.
 
 
 def _write_csv(path, rows):
@@ -198,10 +198,10 @@ def test_read_watchlist_category_optional(tmp_path):
 
 @pytest.mark.skipif(
     not os.path.exists(settings.PRESCREEN_WATCHLIST_PATH),
-    reason="real .xls watchlist not present (git-ignored input)",
+    reason="real .xlsx watchlist not present (git-ignored input)",
 )
-def test_read_real_xls_watchlist():
-    # Proves the .xls read path (xlrd) works against the real watchlist file.
+def test_read_real_xlsx_watchlist():
+    # Proves the .xlsx read path (openpyxl) works against the real watchlist file.
     wl = read_watchlist(settings.PRESCREEN_WATCHLIST_PATH)
     assert len(wl) > 0
     assert all(sym.isupper() and sym for sym, _ in wl)

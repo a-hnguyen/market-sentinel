@@ -16,8 +16,8 @@ aws s3 cp "$S3/settings_local.py" "$AE/settings_local.py" \
   --region "$AWS_REGION" || echo "no settings_local.py in overlay (using defaults)"
 
 # Curated watchlist for the pre-screen.
-aws s3 cp "$S3/watchlist.xls" "$AE/data/watchlist.xls" \
-  --region "$AWS_REGION" || echo "no watchlist.xls in overlay (prescreen will skip)"
+aws s3 cp "$S3/watchlist.xlsx" "$AE/data/watchlist.xlsx" \
+  --region "$AWS_REGION" || echo "no watchlist.xlsx in overlay (prescreen will skip)"
 
 # User-managed symbols must survive EC2 replacements. Runtime writes upload the
 # same object after every /watch or /unwatch; a missing first-boot object is fine.

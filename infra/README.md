@@ -93,7 +93,7 @@ aws ssm put-parameter --name /market-sentinel/github_token      --type SecureStr
 # 5. Upload the private overlay (never in git) to the overlay bucket.
 BUCKET=$(terraform output -raw overlay_bucket)
 aws s3 cp ../../alertengine/settings_local.py        "s3://$BUCKET/private/settings_local.py"
-aws s3 cp ../../alertengine/data/watchlist.xls        "s3://$BUCKET/private/watchlist.xls"
+aws s3 cp ../../alertengine/data/watchlist.xlsx       "s3://$BUCKET/private/watchlist.xlsx"
 # Optional read-only Robinhood watcher, after local OAuth bootstrap:
 aws s3 cp ../../alertengine/data/robinhood_oauth.json \
   "s3://$BUCKET/private/runtime/robinhood_oauth.json"

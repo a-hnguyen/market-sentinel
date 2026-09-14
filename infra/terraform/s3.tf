@@ -1,5 +1,5 @@
 # Private bucket for the git-ignored layer that must NEVER live in the public
-# repo: settings_local.py, rules/_private/, data/watchlist.xls. The box pulls
+# repo: settings_local.py, rules/_private/, data/watchlist.xlsx. The box pulls
 # these on boot (see user_data). An archive/ prefix is reserved for a future
 # sink; the current engine does not upload candidates or alerts there.
 #
