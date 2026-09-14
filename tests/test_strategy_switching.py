@@ -29,19 +29,26 @@ class _Notifier(Notifier):
         pass
 
 
-def _strategy(name, minutes, timeout):
+def _strategy(name, minutes, timeout, **kwargs):
     return StrategyConfig(
         name=name,
         rule=_Rule(),
         bar_interval_minutes=minutes,
         arm_timeout_bars=timeout,
+        **kwargs,
     )
 
 
 def _engine():
     strategies = {
         "slow": _strategy("slow", 2, 15),
-        "fast": _strategy("fast", 1, 15),
+        "fast": _strategy(
+            "fast",
+            1,
+            15,
+            preserve_history_on_timeout=True,
+            repeat_watch_lifecycle=True,
+        ),
     }
     return AlertEngine(
         screener=MockScreener(),
@@ -65,6 +72,8 @@ def test_select_strategy_updates_runtime_and_clears_incompatible_history():
     assert engine.strategy_name == "fast"
     assert engine.bar_interval_minutes == 1
     assert engine.arm_timeout_bars == 15
+    assert engine.preserve_history_on_timeout is True
+    assert engine.repeat_watch_lifecycle is True
     assert engine._states == {}
     assert engine.status()["available_strategies"] == ["fast", "slow"]
 

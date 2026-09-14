@@ -44,6 +44,8 @@ class Alert:
     rule: str  # e.g. "bb_rsi_layer1"
     message: str
     context: dict = field(default_factory=dict)  # close, bb_lower, rsi, etc.
-    # "watch"/"sell_watch" = armed; "buy"/"sell" = confirmed. Notifiers may
-    # render the stages differently. Default preserves generic-alert callers.
+    # "watch"/"sell_watch" = armed; "buy"/"sell" = confirmed;
+    # "watch_expired"/"sell_watch_expired" = confirmation window elapsed.
+    # Notifiers may render the lifecycle stages differently. Default preserves
+    # generic-alert callers.
     kind: str = "alert"

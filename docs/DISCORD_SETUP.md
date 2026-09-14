@@ -69,6 +69,22 @@ initial setup (or verify the next real setup alert) to confirm Embed Links. Test
 an unauthorized Discord account or another channel too; it must receive only an
 ephemeral denial.
 
+Alert delivery is event-driven rather than continuously refreshed:
+
+- An armed setup creates one lifecycle card. Its relative expiration is rendered
+  by Discord in each viewer's local time without the bot editing every minute.
+- Confirmation edits the original card to `CONFIRMED` and posts a separate fresh
+  BUY/SELL message so it follows Discord's normal new-message notification path.
+- Timeout or alert-window closure edits the original card to `EXPIRED` and does
+  not send a separate expiration message.
+- Armed cards prioritize **Research on Yahoo**; confirmed alerts prioritize
+  **Open in Robinhood** and retain Yahoo as the second link. Expired cards remove
+  the brokerage link. Every link opens a stock-detail page only—no order is
+  submitted or prefilled.
+- Card handles are short-lived in-memory state. A service restart leaves any old
+  card static, but its expiration remains visible and new setups create new
+  cards.
+
 Do not run a local `--headless` process with the production token while EC2 is
 online: it would create a second Gateway client for the same control bot. Local
 replay should use the normal console REPL (`python -m alertengine --replay`).
@@ -105,3 +121,4 @@ persisted watchlist and do not affect the regular Alpaca watcher.
   `/watch` symbols.
 - Alerts based on bars before the 6:30 AM Pacific regular-session open are
   prefixed `PREMARKET` so extended-hours signals are unambiguous.
+- `/screen` makes each candidate symbol a Yahoo Finance research link.

@@ -8,10 +8,12 @@ command to one guild, one channel, and an explicit user allowlist.
 import asyncio
 import io
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import discord
@@ -29,6 +31,7 @@ from .prescreen.sinks import load_candidates
 from .watch_controller import WatchController
 
 _PACIFIC = ZoneInfo("America/Los_Angeles")
+_LOG = logging.getLogger("alertengine.discord")
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,12 @@ class DiscordConfig:
         return cls(token, guild_id, channel_id, allowed)
 
 
+@dataclass
+class _LifecycleCard:
+    message: discord.Message
+    armed_alert: Alert
+
+
 class DiscordBot(discord.Client, Notifier):
     def __init__(
         self,
@@ -77,6 +86,7 @@ class DiscordBot(discord.Client, Notifier):
         self.penny_controller = penny_controller
         self.tree = app_commands.CommandTree(self)
         self._prescreen_task: asyncio.Task[None] | None = None
+        self._lifecycle_messages: dict[tuple[str, str, str], _LifecycleCard] = {}
         self._register_commands()
 
     async def setup_hook(self) -> None:
@@ -112,16 +122,48 @@ class DiscordBot(discord.Client, Notifier):
     def _candidate_lines(candidates: list[Candidate]) -> str:
         if not candidates:
             return "No candidates."
-        lines = ["```text"]
+        lines = []
         for c in candidates[:20]:
+            url = DiscordBot.yahoo_url(c.symbol)
             lines.append(
-                f"{c.symbol:<7} ${c.price:>8.2f}  {c.pct_change:>+6.1f}%  "
-                f"volx{c.volume_ratio:>4.1f}"
+                f"[{c.symbol}]({url}) · `${c.price:>8.2f}` · "
+                f"`{c.pct_change:>+6.1f}%` · `volx{c.volume_ratio:>4.1f}`"
             )
-        lines.append("```")
         if len(candidates) > 20:
             lines.append(f"Showing 20 of {len(candidates)} candidates.")
         return "\n".join(lines)
+
+    @staticmethod
+    def yahoo_url(symbol: str) -> str:
+        return f"https://finance.yahoo.com/quote/{quote(symbol, safe='')}"
+
+    @staticmethod
+    def robinhood_url(symbol: str) -> str:
+        return f"https://robinhood.com/us/en/stocks/{quote(symbol, safe='')}/"
+
+    @staticmethod
+    def alert_links(
+        alert: Alert, lifecycle_state: str | None = None
+    ) -> discord.ui.View:
+        """Research first while armed; brokerage first after confirmation."""
+        view = discord.ui.View(timeout=None)
+        yahoo = discord.ui.Button(
+            label="Research on Yahoo",
+            url=DiscordBot.yahoo_url(alert.symbol),
+        )
+        robinhood = discord.ui.Button(
+            label="Open in Robinhood",
+            url=DiscordBot.robinhood_url(alert.symbol),
+        )
+        if lifecycle_state == "expired":
+            view.add_item(yahoo)
+        elif lifecycle_state == "confirmed" or alert.kind in ("buy", "sell"):
+            view.add_item(robinhood)
+            view.add_item(yahoo)
+        else:
+            view.add_item(yahoo)
+            view.add_item(robinhood)
+        return view
 
     async def _run_prescreen_job(self, channel: discord.abc.Messageable) -> None:
         """Run the CPU-heavy scan out of process and report back to Discord."""
@@ -519,12 +561,16 @@ class DiscordBot(discord.Client, Notifier):
             "buy": 0x2ECC71,
             "sell_watch": 0xE67E22,
             "sell": 0xE74C3C,
+            "watch_expired": 0x95A5A6,
+            "sell_watch_expired": 0x95A5A6,
         }
         labels = {
             "watch": "BUY SETUP ARMED",
             "buy": "BUY ALERT",
             "sell_watch": "SELL SETUP ARMED",
             "sell": "SELL ALERT",
+            "watch_expired": "BUY SETUP EXPIRED",
+            "sell_watch_expired": "SELL SETUP EXPIRED",
         }
         session = "PREMARKET · " if in_premarket(alert.timestamp) else ""
         embed = discord.Embed(
@@ -533,6 +579,15 @@ class DiscordBot(discord.Client, Notifier):
             color=colors.get(kind, 0x3498DB),
         )
         for key, value in (alert.context or {}).items():
+            if key == "expires_at":
+                try:
+                    expires = datetime.fromisoformat(str(value))
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=timezone.utc)
+                    unix = int(expires.timestamp())
+                    value = f"<t:{unix}:R> · <t:{unix}:t>"
+                except ValueError:
+                    pass
             if isinstance(value, float):
                 value = f"{value:.2f}"
             embed.add_field(name=key.replace("_", " ").title(), value=str(value))
@@ -541,6 +596,93 @@ class DiscordBot(discord.Client, Notifier):
             ts = ts.replace(tzinfo=timezone.utc)
         embed.set_footer(text=ts.astimezone(_PACIFIC).strftime("%Y-%m-%d %H:%M %Z"))
         return embed
+
+    @staticmethod
+    def lifecycle_embed(
+        armed_alert: Alert, state: str, outcome: Alert | None = None
+    ) -> discord.Embed:
+        direction = (
+            "BUY" if armed_alert.kind in ("watch", "watch_expired", "buy") else "SELL"
+        )
+        labels = {"confirmed": "CONFIRMED", "expired": "EXPIRED"}
+        colors = {"confirmed": 0x2ECC71, "expired": 0x95A5A6}
+        session = "PREMARKET · " if in_premarket(armed_alert.timestamp) else ""
+        embed = DiscordBot.alert_embed(armed_alert)
+        embed.title = (
+            f"{session}{direction} SETUP {labels[state]} — {armed_alert.symbol}"
+        )
+        embed.color = discord.Color(colors[state])
+        if outcome is not None:
+            marker = "✅" if state == "confirmed" else "⌛"
+            embed.description = (
+                f"{armed_alert.message}\n\n{marker} **{labels[state]}:** "
+                f"{outcome.message}"
+            )
+            if "close" in (outcome.context or {}):
+                embed.add_field(
+                    name="Final Close",
+                    value=f"{outcome.context['close']:.2f}",
+                )
+        return embed
+
+    @staticmethod
+    def _lifecycle_key(alert: Alert) -> tuple[str, str, str]:
+        watcher = str((alert.context or {}).get("watcher", "regular"))
+        direction = "buy" if alert.kind in ("watch", "watch_expired", "buy") else "sell"
+        return watcher, alert.symbol.upper(), direction
+
+    async def _deliver_alert(
+        self, channel: discord.abc.Messageable, alert: Alert
+    ) -> None:
+        """Deliver one lifecycle event without coupling the engine to Discord."""
+        kind = getattr(alert, "kind", "alert")
+        key = self._lifecycle_key(alert)
+
+        if kind in ("watch", "sell_watch"):
+            previous = self._lifecycle_messages.pop(key, None)
+            if previous is not None:
+                try:
+                    await previous.message.edit(
+                        embed=self.lifecycle_embed(previous.armed_alert, "expired"),
+                        view=self.alert_links(
+                            previous.armed_alert, lifecycle_state="expired"
+                        ),
+                    )
+                except Exception as exc:
+                    _LOG.warning("failed to retire previous lifecycle card: %s", exc)
+            message = await channel.send(
+                embed=self.alert_embed(alert), view=self.alert_links(alert)
+            )
+            self._lifecycle_messages[key] = _LifecycleCard(message, alert)
+            return
+
+        if kind in ("watch_expired", "sell_watch_expired"):
+            card = self._lifecycle_messages.pop(key, None)
+            if card is not None:
+                try:
+                    await card.message.edit(
+                        embed=self.lifecycle_embed(card.armed_alert, "expired", alert),
+                        view=self.alert_links(alert, lifecycle_state="expired"),
+                    )
+                except Exception as exc:
+                    _LOG.warning("failed to expire lifecycle card: %s", exc)
+            return
+
+        if kind in ("buy", "sell"):
+            card = self._lifecycle_messages.pop(key, None)
+            if card is not None:
+                try:
+                    await card.message.edit(
+                        embed=self.lifecycle_embed(
+                            card.armed_alert, "confirmed", alert
+                        ),
+                        view=self.alert_links(alert, lifecycle_state="confirmed"),
+                    )
+                except Exception as exc:
+                    # A card edit must never suppress the fresh actionable push.
+                    _LOG.warning("failed to confirm lifecycle card: %s", exc)
+
+        await channel.send(embed=self.alert_embed(alert), view=self.alert_links(alert))
 
     async def send(self, alert: Alert) -> None:
         if not self.is_ready():
@@ -551,7 +693,7 @@ class DiscordBot(discord.Client, Notifier):
         channel = self.get_channel(self.config.channel_id)
         if channel is None:
             channel = await self.fetch_channel(self.config.channel_id)
-        await channel.send(embed=self.alert_embed(alert))
+        await self._deliver_alert(channel, alert)
 
 
 async def run_discord(

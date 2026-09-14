@@ -75,7 +75,7 @@ def test_rules_only_run_inside_inclusive_pacific_window():
     asyncio.run(_feed(engine, _bar(before), _bar(at_start), _bar(at_end), _bar(after)))
 
     assert rule.calls == 2
-    assert len(notifier.alerts) == 1  # first in-window bar arms; second advances it
+    assert [alert.kind for alert in notifier.alerts] == ["watch", "watch_expired"]
     status = engine.status()["symbols"]["ZZ"]
     assert status["bars_seen"] == 4
     assert status["history"] == 4
@@ -97,7 +97,12 @@ def test_outside_bar_cancels_an_in_progress_confirmation():
         )
     )
 
-    assert [alert.kind for alert in notifier.alerts] == ["watch", "watch"]
+    assert [alert.kind for alert in notifier.alerts] == [
+        "watch",
+        "watch_expired",
+        "watch",
+    ]
+    assert notifier.alerts[1].context["reason"] == "alert window closed"
     assert engine.status()["symbols"]["ZZ"]["phase"] == "armed"
 
 

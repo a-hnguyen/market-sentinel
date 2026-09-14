@@ -139,7 +139,8 @@ def test_sell_timeout_resets_and_drops_history():
     n = _Rec()
     e = _engine(ScriptedExitRule(hot={0}), n, arm_timeout_bars=3)
     asyncio.run(_feed(e, [_bar(0, True), _bar(1, True), _bar(2, True), _bar(3, True)]))
-    assert _kinds(n) == ["sell_watch"]  # never confirmed
+    assert _kinds(n) == ["sell_watch", "sell_watch_expired"]  # never confirmed
+    assert n.alerts[-1].context["reason"] == "confirmation window elapsed"
     st = e.status()["symbols"]["ZZ"]
     assert st["sell_phase"] == "waiting"
     assert st["history"] == 0
@@ -196,7 +197,7 @@ def test_buy_and_sell_are_independent_and_share_protected_history():
         )
     )
     # A sell was never confirmed; a buy was. Both watches + the buy fired.
-    assert _kinds(n) == ["watch", "sell_watch", "buy"]
+    assert _kinds(n) == ["watch", "sell_watch", "buy", "sell_watch_expired"]
     st = e.status()["symbols"]["ZZ"]
     assert st["sell_phase"] == "waiting"  # short timed out
     # History preserved: the long machine was still non-idle (cooldown) when the

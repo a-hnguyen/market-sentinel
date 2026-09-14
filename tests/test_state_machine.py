@@ -83,6 +83,16 @@ class ScriptedTriggerRule(ArmedTriggerRule):
         return next(self._results)
 
 
+class WindowAwareTriggerRule(ScriptedTriggerRule):
+    def __init__(self, results):
+        super().__init__(results)
+        self.armed_at = None
+
+    def evaluate_since(self, symbol, bars, armed_at):
+        self.armed_at = armed_at
+        return self.evaluate(symbol, bars)
+
+
 def _bar(i, green, symbol="ZZ", *, interpolated=False, interval_minutes=2):
     o, c = 100.0, (101.0 if green else 99.0)
     return Bar(
@@ -124,6 +134,12 @@ def test_arm_then_two_greens_fires_buy():
     asyncio.run(_feed(e, [_bar(0, False), _bar(1, True), _bar(2, True)]))
     assert _kinds(n) == ["watch", "buy"]
     assert n.alerts[0].rule == "bb_rsi_layer1"
+    assert (
+        n.alerts[0].context["expires_at"]
+        == (
+            BASE + timedelta(minutes=(e.arm_timeout_bars + 1) * e.bar_interval_minutes)
+        ).isoformat()
+    )
     assert n.alerts[1].rule == "bb_rsi_buy"
     assert e.status()["symbols"]["ZZ"]["phase"] == "cooldown"
 
@@ -155,7 +171,7 @@ def test_confirmation_rule_cannot_extend_the_arm_timeout():
 
     asyncio.run(_feed(e, [_bar(0, False), _bar(1, True), _bar(2, True), _bar(3, True)]))
 
-    assert _kinds(n) == ["watch"]
+    assert _kinds(n) == ["watch", "watch_expired"]
     assert confirmation.calls == 2
     status = e.status()["symbols"]["ZZ"]
     assert status["phase"] == "waiting"
@@ -221,10 +237,61 @@ def test_timeout_resets_symbol_and_drops_history():
     asyncio.run(
         _feed(e, [_bar(0, False), _bar(1, False), _bar(2, False), _bar(3, False)])
     )
-    assert _kinds(n) == ["watch"]  # never confirmed
+    assert _kinds(n) == ["watch", "watch_expired"]  # never confirmed
+    assert n.alerts[-1].context["reason"] == "confirmation window elapsed"
+    assert n.alerts[-1].context["bars_waited"] == 3
     st = e.status()["symbols"]["ZZ"]
     assert st["phase"] == "waiting"
     assert st["history"] == 0
+
+
+def test_windowed_timeout_can_preserve_history_and_show_the_restarted_timer():
+    n = _Rec()
+    e = _engine(
+        ScriptedRule(hot={0, 3}),
+        n,
+        arm_timeout_bars=2,
+        notify_once_per_kind_per_day=True,
+        preserve_history_on_timeout=True,
+        repeat_watch_lifecycle=True,
+    )
+
+    asyncio.run(
+        _feed(e, [_bar(0, False), _bar(1, False), _bar(2, False), _bar(3, False)])
+    )
+
+    assert _kinds(n) == ["watch", "watch_expired", "watch"]
+    status = e.status()["symbols"]["ZZ"]
+    assert status["phase"] == "armed"
+    assert status["history"] == 4
+
+
+def test_repeating_watch_cycles_stop_after_the_daily_buy_is_delivered():
+    n = _Rec()
+    e = _engine(
+        ScriptedRule(hot={0, 5}),
+        n,
+        cooldown_bars=2,
+        notify_once_per_kind_per_day=True,
+        repeat_watch_lifecycle=True,
+    )
+
+    asyncio.run(
+        _feed(
+            e,
+            [
+                _bar(0, False),
+                _bar(1, True),
+                _bar(2, True),
+                _bar(3, False),
+                _bar(4, False),
+                _bar(5, False),
+            ],
+        )
+    )
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert e.status()["symbols"]["ZZ"]["phase"] == "waiting"
 
 
 def test_cooldown_blocks_reentry_while_still_oversold():
@@ -317,6 +384,22 @@ def test_armed_trigger_replaces_green_candle_confirmation():
     assert n.alerts[-1].context["trigger_value"] == 20.1
 
 
+def test_armed_trigger_receives_the_setup_window_start():
+    n = _Rec()
+    trigger = WindowAwareTriggerRule([{"trigger_value": 20.1}])
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        buy_trigger_rule=trigger,
+        buy_fire_rule="windowed_buy",
+    )
+
+    asyncio.run(_feed(e, [_bar(0, False), _bar(1, False)]))
+
+    assert _kinds(n) == ["watch", "buy"]
+    assert trigger.armed_at == BASE
+
+
 def test_armed_trigger_can_fire_on_final_minute_of_timeout_window():
     n = _Rec()
     trigger = ScriptedTriggerRule([None] * 14 + [{"trigger_value": 20.1}])
@@ -347,6 +430,6 @@ def test_armed_trigger_expires_after_fifteen_one_minute_bars():
 
     asyncio.run(_feed(e, [_bar(i, False, interval_minutes=1) for i in range(17)]))
 
-    assert _kinds(n) == ["watch"]
+    assert _kinds(n) == ["watch", "watch_expired"]
     assert trigger.calls == 15
     assert e.status()["symbols"]["ZZ"]["phase"] == "waiting"

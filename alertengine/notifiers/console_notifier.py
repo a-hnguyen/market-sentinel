@@ -64,6 +64,8 @@ class ConsoleNotifier(Notifier):
             "buy": "BUY  ",
             "sell_watch": "S-WCH",
             "sell": "SELL ",
+            "watch_expired": "B-EXP",
+            "sell_watch_expired": "S-EXP",
         }.get(alert.kind, "ALERT")
         # Date included because replay bars span multiple days; %Z -> PST/PDT.
         session = "PREMARKET " if in_premarket(alert.timestamp) else ""

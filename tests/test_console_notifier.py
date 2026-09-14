@@ -71,6 +71,16 @@ def test_unknown_kind_falls_back_to_alert_label(tmp_path, capsys):
     assert "[ALERT" in capsys.readouterr().out
 
 
+def test_expired_setup_has_a_distinct_label(tmp_path, capsys):
+    alert = _watch_alert()
+    alert.kind = "watch_expired"
+    alert.message = "BUY setup expired: confirmation window elapsed."
+
+    _send(ConsoleNotifier(logfile=str(tmp_path / "a.log")), alert)
+
+    assert "[B-EXP" in capsys.readouterr().out
+
+
 def test_numeric_context_builds_columns(tmp_path, capsys):
     _send(ConsoleNotifier(logfile=str(tmp_path / "a.log")), _watch_alert())
     out = capsys.readouterr().out

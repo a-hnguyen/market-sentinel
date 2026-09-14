@@ -42,7 +42,9 @@ README is the shorter entry point; this is the detailed current-state map.
                         ┌─────────────┴─────────────┐
                         ▼                           ▼
                 ConsoleNotifier              DiscordBot
-                stdout + alerts.log          embeds + commands
+                stdout + alerts.log          lifecycle cards + commands
+                                               │
+                              Yahoo research ◀─┴─▶ Robinhood stock page
 ```
 
 The post-close pre-screen is a separate batch flow. It writes
@@ -128,7 +130,7 @@ kind of state or decision.
 | `ApprovalGate` | current in-memory union of approved symbols | durable storage |
 | `BarAggregator` | native 1-minute pass-through or partial clock-aligned multi-minute buckets per symbol | historical indicator state |
 | `AlpacaFeed` | REST requests and one websocket connection attempt | retry scheduling after a failed socket |
-| `DiscordBot` | command authorization, slash commands, alert embeds, background manual pre-screen job | trading logic |
+| `DiscordBot` | command authorization, slash commands, lifecycle-message handles, link buttons, background manual pre-screen job | trading logic, order execution |
 | `PreScreener` | 4h/1h RSI confluence | live BB/RSI alert decisions |
 | `RobinhoodHistoricalFeed` | request batching and response normalization | OAuth, polling, strategy logic |
 | `HistoricalPollingFeed` | completed-minute polling, overlap recovery, de-duplication | provider authentication, indicator rules |
@@ -155,16 +157,33 @@ This separation is deliberate. For example, a websocket failure escapes
    - Alerts based on bars before the 06:30 Pacific regular-session open are
      labelled `PREMARKET` in Discord and console output.
 6. A setup alert arms its direction-specific state machine. The arming bar does
-   not count toward confirmation.
+   not count toward confirmation. The event includes its expected expiration,
+   and Discord posts one yellow/orange lifecycle card with research links.
 7. Two consecutive green closes confirm the public BUY pattern; two consecutive
    red closes confirm SELL. An optional `ConfirmationRule` may apply additional
    private checks after the BUY pattern, while an `ArmedTriggerRule` can replace
-   the candle pattern for either direction. A timeout still bounds the armed
-   state, and a cooldown suppresses repeats.
-8. For the regular watcher, a delivery gate permits each symbol/alert kind only
-   once per Pacific calendar day. The state machines continue processing any
-   suppressed repeats. The penny watcher retains repeat-after-cooldown behavior.
-9. `MultiNotifier` sends permitted alerts to the console/log and Discord.
+   the candle pattern for either direction. Window-aware triggers receive the
+   exact arm timestamp, so they can combine observations made on separate bars
+   without owning mutable state. A timeout still bounds the armed state, and a
+   cooldown suppresses repeats.
+8. If the confirmation window elapses, the engine emits an expiration event;
+   Discord edits the original card to gray `EXPIRED` without posting a new
+   notification. On confirmation, Discord edits the card to `CONFIRMED` and
+   also posts a fresh BUY/SELL message so mobile push delivery is not dependent
+   on a message edit. Confirmed messages put Robinhood first and Yahoo research
+   second; expired cards retain only the research link. These are stock-detail
+   links only and cannot place or prefill an order.
+9. For the regular watcher, a delivery gate permits each symbol/alert kind only
+   once per Pacific calendar day by default. Strategies may allow fresh
+   WATCH/EXPIRED lifecycle cards after a timeout while retaining the once-daily
+   final BUY/SELL limit; after a final alert, no new same-direction timer starts
+   that day. The penny watcher retains repeat-after-cooldown behavior.
+10. `MultiNotifier` sends permitted alerts to the console/log and Discord.
+
+Discord's lifecycle-message handles live in process memory because setups are
+short-lived. If the service restarts while a card is armed, the old Discord
+message remains visible but cannot be edited by the new process; its displayed
+expiration time still communicates when it became stale.
 
 REST backfill runs before a live subscription and seeds history without
 evaluating rules or sending alerts. It is a best-effort recent wall-clock

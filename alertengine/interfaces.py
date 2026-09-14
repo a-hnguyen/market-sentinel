@@ -61,6 +61,17 @@ class ArmedTriggerRule(ABC):
     def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None:
         """Return alert context when the armed trigger passes, otherwise None."""
 
+    def evaluate_since(
+        self, symbol: str, bars: list[Bar], armed_at: datetime
+    ) -> dict[str, float] | None:
+        """Evaluate an armed window, defaulting to the latest-bar behavior.
+
+        Window-aware rules may override this to combine observations made on
+        separate bars without owning mutable state. The engine remains the
+        source of truth for when the window began and when it expires.
+        """
+        return self.evaluate(symbol, bars)
+
 
 class Notifier(ABC):
     @abstractmethod

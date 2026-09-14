@@ -27,6 +27,12 @@ Discord or local REPL
                                            console + Discord alerts
 ```
 
+Discord keeps each armed setup as a lifecycle card. The bot edits that card to
+`CONFIRMED` or `EXPIRED`; a confirmation also creates a new message so mobile
+notification delivery is not dependent on an edit. Cards link to Yahoo Finance
+for research and Robinhood's stock-detail page for manual execution. The links
+never submit or prefill an order.
+
 A separate post-close pre-screen evaluates a curated watchlist over
 regular-session-only 4-hour and 1-hour RSI data. It selects stocks that are
 oversold on both timeframes or overbought on both and writes their labeled union
@@ -100,5 +106,8 @@ Replay still enforces the configured alert window against historical bar times.
   same private overlay and restored before the watcher starts.
 - The optional Robinhood watcher keeps its OAuth state and `/penny-watch` list
   in separate git-ignored files backed up to the same private S3 overlay.
+- Discord lifecycle-card handles are intentionally transient. A process restart
+  does not recover old message handles; their displayed expiration remains, and
+  subsequent setups create fresh cards.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution
   are not part of the current system.

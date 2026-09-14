@@ -83,6 +83,31 @@ def test_watch_and_buy_go_to_console_and_chat(tmp_path, capsys):
     assert [a.kind for a in chat.alerts] == ["watch", "buy"]
 
 
+def test_watch_expiration_goes_to_console_and_chat(tmp_path, capsys):
+    console = ConsoleNotifier(logfile=str(tmp_path / "alerts.log"))
+    chat = _Chat()
+    engine = AlertEngine(
+        screener=MockScreener(),
+        feed=_DummyFeed(),
+        rule=_ArmOnceRule(),
+        notifier=MultiNotifier([console, chat]),
+        gate=ApprovalGate(),
+        arm_timeout_bars=2,
+    )
+
+    async def drive():
+        await engine._on_2min_bar(_bar(0, green=False))
+        await engine._on_2min_bar(_bar(1, green=False))
+        await engine._on_2min_bar(_bar(2, green=False))
+
+    asyncio.run(drive())
+
+    out = capsys.readouterr().out
+    assert "[WATCH" in out
+    assert "[B-EXP" in out
+    assert [a.kind for a in chat.alerts] == ["watch", "watch_expired"]
+
+
 def test_multi_notifier_isolates_a_failed_channel():
     class _Broken(Notifier):
         async def send(self, alert):

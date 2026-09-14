@@ -17,6 +17,8 @@ class StrategyConfig:
     sell_fire_rule: str = "bb_rsi_sell"
     bar_interval_minutes: int = 2
     arm_timeout_bars: int = 15
+    preserve_history_on_timeout: bool = False
+    repeat_watch_lifecycle: bool = False
 
     def __post_init__(self) -> None:
         if not self.name or self.name != self.name.strip().lower():

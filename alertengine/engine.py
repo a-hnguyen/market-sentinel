@@ -13,7 +13,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
 from . import settings
@@ -60,6 +60,7 @@ class _DirectionMachine:
     consecutive: int = 0  # progress toward the two-close confirmation
     bars_since_arm: int = 0  # timeout counter while ARMED
     bars_since_alert: int = 0  # min-floor counter while COOLDOWN
+    armed_at: datetime | None = None  # start of the active confirmation window
 
     def is_confirm_close(self, bar: Bar) -> bool:
         """A confirming close: green (up) for long, red (down) for short."""
@@ -73,6 +74,7 @@ class _DirectionMachine:
         self.consecutive = 0
         self.bars_since_arm = 0
         self.bars_since_alert = 0
+        self.armed_at = None
 
     @property
     def watch_kind(self) -> str:
@@ -81,6 +83,10 @@ class _DirectionMachine:
     @property
     def fire_kind(self) -> str:
         return "buy" if self.long else "sell"
+
+    @property
+    def expired_kind(self) -> str:
+        return "watch_expired" if self.long else "sell_watch_expired"
 
 
 @dataclass
@@ -118,6 +124,8 @@ class AlertEngine:
         sell_fire_rule: str = "bb_rsi_sell",
         bar_interval_minutes: int = 2,
         notify_once_per_kind_per_day: bool = False,
+        preserve_history_on_timeout: bool = False,
+        repeat_watch_lifecycle: bool = False,
         strategies: dict[str, StrategyConfig] | None = None,
         strategy_name: str = "default",
     ) -> None:
@@ -145,6 +153,8 @@ class AlertEngine:
             sell_fire_rule=sell_fire_rule,
             bar_interval_minutes=bar_interval_minutes,
             arm_timeout_bars=arm_timeout_bars,
+            preserve_history_on_timeout=preserve_history_on_timeout,
+            repeat_watch_lifecycle=repeat_watch_lifecycle,
         )
         self._strategies = dict(strategies or {strategy_name: fallback})
         if strategy_name not in self._strategies:
@@ -202,6 +212,8 @@ class AlertEngine:
         self.sell_fire_rule = strategy.sell_fire_rule
         self.bar_interval_minutes = strategy.bar_interval_minutes
         self.arm_timeout_bars = strategy.arm_timeout_bars
+        self.preserve_history_on_timeout = strategy.preserve_history_on_timeout
+        self.repeat_watch_lifecycle = strategy.repeat_watch_lifecycle
 
     def _new_state(self) -> _SymbolState:
         """Build a symbol's machines from the engine's tunables. The short (SELL)
@@ -333,7 +345,9 @@ class AlertEngine:
                         machine.phase.value,
                         bar.timestamp.isoformat(),
                     )
-            self._reset_machines(state)
+                if machine.phase is Phase.ARMED:
+                    await self._expire(machine, bar, "alert window closed")
+                machine.reset()
             return
 
         # Setup rules only arm their machine; the configured confirmation fires
@@ -345,11 +359,6 @@ class AlertEngine:
             short_setup = self.exit_rule.evaluate(bar.symbol, state.history)
             await self._step(state, state.short, bar, short_setup)
 
-    @staticmethod
-    def _reset_machines(state: _SymbolState) -> None:
-        for machine in state.machines():
-            machine.reset()
-
     async def _step(
         self,
         state: _SymbolState,
@@ -360,6 +369,10 @@ class AlertEngine:
         signal = setup is not None
         if machine.phase is Phase.WAITING:
             if signal:
+                if self.repeat_watch_lifecycle and self._notified_today(
+                    bar.symbol, machine.fire_kind, bar.timestamp
+                ):
+                    return
                 await self._arm(machine, bar, setup)
         elif machine.phase is Phase.ARMED:
             await self._advance_armed(state, machine, bar)
@@ -369,6 +382,14 @@ class AlertEngine:
     async def _arm(self, machine: _DirectionMachine, bar: Bar, setup: Alert) -> None:
         """WAITING -> ARMED: fire a WATCH alert and await confirmation."""
         setup.kind = machine.watch_kind
+        # Bar timestamps mark the candle's start. The WATCH is delivered only
+        # after that candle closes, then the machine permits `arm_timeout_bars`
+        # subsequent candles, so the visible deadline is one interval beyond
+        # the arming bar's timestamp.
+        expires_at = bar.timestamp + timedelta(
+            minutes=(machine.arm_timeout_bars + 1) * self.bar_interval_minutes
+        )
+        setup.context.setdefault("expires_at", expires_at.isoformat())
         self._enrich(setup, bar.symbol)
         await self._notify(setup)
         _LOG.info(
@@ -381,6 +402,7 @@ class AlertEngine:
         machine.phase = Phase.ARMED
         machine.consecutive = 0
         machine.bars_since_arm = 0
+        machine.armed_at = bar.timestamp
 
     async def _advance_armed(
         self, state: _SymbolState, machine: _DirectionMachine, bar: Bar
@@ -388,7 +410,11 @@ class AlertEngine:
         machine.bars_since_arm += 1
         trigger_rule = self._armed_trigger_rule(machine)
         if trigger_rule is not None:
-            result = trigger_rule.evaluate(bar.symbol, state.history)
+            if machine.armed_at is None:  # pragma: no cover - state invariant
+                raise RuntimeError("armed machine is missing its start timestamp")
+            result = trigger_rule.evaluate_since(
+                bar.symbol, state.history, machine.armed_at
+            )
             _LOG.info(
                 "event=armed_trigger_evaluation symbol=%s direction=%s "
                 "passed=%s bars_since_arm=%d close=%.4f bar_time=%s",
@@ -403,7 +429,7 @@ class AlertEngine:
                 await self._fire(machine, bar, result, armed_trigger=True)
                 return
             if machine.bars_since_arm >= machine.arm_timeout_bars:
-                self._timeout(state, machine, bar.symbol)
+                await self._timeout(state, machine, bar)
             return
 
         if machine.is_confirm_close(bar):
@@ -442,7 +468,7 @@ class AlertEngine:
                 await self._fire(machine, bar, context)
                 return
         if machine.bars_since_arm >= machine.arm_timeout_bars:
-            self._timeout(state, machine, bar.symbol)
+            await self._timeout(state, machine, bar)
 
     async def _fire(
         self,
@@ -497,12 +523,14 @@ class AlertEngine:
 
     async def _notify(self, alert: Alert) -> bool:
         """Deliver an alert unless its symbol/kind already fired that local day."""
-        if self.notify_once_per_kind_per_day:
-            timestamp = alert.timestamp
-            if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-                local_day = timestamp.date()
-            else:
-                local_day = timestamp.astimezone(self._alert_window.timezone).date()
+        repeatable_lifecycle = self.repeat_watch_lifecycle and alert.kind in {
+            "watch",
+            "sell_watch",
+            "watch_expired",
+            "sell_watch_expired",
+        }
+        if self.notify_once_per_kind_per_day and not repeatable_lifecycle:
+            local_day = self._local_day(alert.timestamp)
             key = (alert.symbol, alert.kind)
             if self._notification_days.get(key) == local_day:
                 _LOG.info(
@@ -518,8 +546,16 @@ class AlertEngine:
         await self.notifier.send(alert)
         return True
 
-    def _timeout(
-        self, state: _SymbolState, machine: _DirectionMachine, symbol: str
+    def _local_day(self, timestamp: datetime) -> date:
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            return timestamp.date()
+        return timestamp.astimezone(self._alert_window.timezone).date()
+
+    def _notified_today(self, symbol: str, kind: str, timestamp: datetime) -> bool:
+        return self._notification_days.get((symbol, kind)) == self._local_day(timestamp)
+
+    async def _timeout(
+        self, state: _SymbolState, machine: _DirectionMachine, bar: Bar
     ) -> None:
         """ARMED -> WAITING: no confirmation in the window. Reset this machine.
 
@@ -531,16 +567,35 @@ class AlertEngine:
         """
         _LOG.info(
             "event=confirmation_timeout symbol=%s direction=%s bars_since_arm=%d",
-            symbol,
+            bar.symbol,
             "buy" if machine.long else "sell",
             machine.bars_since_arm,
         )
+        await self._expire(machine, bar, "confirmation window elapsed")
         machine.reset()
-        if all(
+        if not self.preserve_history_on_timeout and all(
             other is machine or other.phase is Phase.WAITING
             for other in state.machines()
         ):
             state.history.clear()
+
+    async def _expire(self, machine: _DirectionMachine, bar: Bar, reason: str) -> None:
+        """Emit a lifecycle event so remote notifiers can retire an armed card."""
+        direction = "buy" if machine.long else "sell"
+        alert = Alert(
+            symbol=bar.symbol,
+            timestamp=bar.timestamp,
+            rule=f"{machine.fire_rule}_expired",
+            message=f"{direction.upper()} setup expired: {reason}.",
+            context={
+                "close": bar.close,
+                "bars_waited": machine.bars_since_arm,
+                "reason": reason,
+            },
+            kind=machine.expired_kind,
+        )
+        self._enrich(alert, bar.symbol)
+        await self._notify(alert)
 
     def _advance_cooldown(
         self, machine: _DirectionMachine, signal: bool, symbol: str
