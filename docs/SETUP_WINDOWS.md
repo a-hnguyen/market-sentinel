@@ -41,7 +41,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 Your prompt should now start with `(.venv)`.
 
-## 4. Add the two config files
+## 4. Add local configuration and any private rule package
 
 These are **not** in the repo (they hold keys and private settings). You'll get
 them separately. Place them exactly here:
@@ -50,10 +50,15 @@ them separately. Place them exactly here:
 | --------------------------------- | --------------------------- |
 | `.env`                            | project root (next to `pyproject.toml`) |
 | `settings_local.py`               | `alertengine\` folder       |
+| Private rule package, if imported by the settings | `alertengine\rules\_private\` |
+| Curated spreadsheet, if running the pre-screen | `alertengine\data\watchlist.xlsx` |
 
 `.env` needs the Alpaca keys for live/replay. `settings_local.py` contains the
-private screening and alert-window settings. Discord values are needed only if
-intentionally running `--headless`; do not start a second headless process while
+private screening and alert-window settings. If it imports private rules, copy
+that package too; the two config files alone are not enough. You can omit the
+private override and use the public example strategy instead. Discord values
+are needed only if intentionally running `--headless`; do not start a second
+headless process while
 production is using the same bot token.
 
 ## 5. Discord is already the production control

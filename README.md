@@ -2,7 +2,9 @@
 
 An asynchronous stock-alert service that watches approved symbols over Alpaca
 market data and sends setup/confirmation alerts to a private Discord channel.
-It is an alerting tool, not an auto-trader: it never submits orders.
+It is an alerting tool, not an auto-trader: it never submits orders. The project
+focuses on a testable streaming pipeline, explicit state ownership, and a small
+AWS deployment—not automated investment decisions.
 
 An optional second watcher polls Robinhood's authenticated MCP endpoint for
 24/5 one-minute bars and applies the
@@ -18,9 +20,9 @@ Discord or local REPL
         │                                               │
         └─ overnight watchlist ─▶ Robinhood MCP poll ───┤
                                                         ▼
-                                      configured bar aggregation
+                            shared pipeline code, independent watcher state
                                                         │
-                                   alert window + BB/RSI rules
+                                   alert window + configured rules
                                                         │
                                       buy/sell confirmation state
                                                         │
@@ -39,8 +41,11 @@ oversold on both timeframes or overbought on both and writes their labeled union
 to `candidates.csv`. Production runs on one EC2 instance under systemd; EventBridge
 Scheduler, Lambda, and SSM trigger it without opening inbound ports.
 
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) next for the component-by-component
-walkthrough, runtime sequences, persistence boundaries, and failure behavior.
+For an interview walkthrough, start with the
+[one-minute explanation](docs/ARCHITECTURE.md#the-one-minute-explanation), then
+the [design decisions](docs/ARCHITECTURE.md#why-these-design-choices).
+The same document includes the file map, state machine, AWS responsibilities,
+and restart/failure boundaries.
 
 ## Run locally
 
@@ -106,8 +111,9 @@ Replay still enforces the configured alert window against historical bar times.
   same private overlay and restored before the watcher starts.
 - The optional Robinhood watcher keeps its OAuth state and `/penny-watch` list
   in separate git-ignored files backed up to the same private S3 overlay.
-- Discord lifecycle-card handles are intentionally transient. A process restart
-  does not recover old message handles; their displayed expiration remains, and
-  subsequent setups create fresh cards.
+- Setup snapshots, confirmation timers, cooldowns, daily notification
+  de-duplication, and Discord card handles are in memory. A restart loses them
+  and rebuilds indicator history through REST backfill. This is not durable
+  exactly-once alert delivery.
 - RDS, a web UI, Kinesis/Kafka, Prometheus/Grafana, brokers, and order execution
   are not part of the current system.

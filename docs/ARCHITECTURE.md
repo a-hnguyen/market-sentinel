@@ -1,378 +1,259 @@
 # Architecture — market-sentinel
 
-`market-sentinel` is an asynchronous alert service, not an auto-trader. It
-screens stocks, watches an approved set over Alpaca market data, and sends
-Discord/console alerts when a setup arms or confirms. It never submits orders.
-An optional second engine watches a separately curated penny/swing list over
-Robinhood 24/5 historical bars; its application adapter is read-only too.
+An asynchronous stock-alert service for a single user. It watches selected
+symbols, detects a setup, waits for confirmation, and sends Discord alerts.
+The user decides whether to trade. **The application never places orders.**
 
-This document describes the code and AWS deployment as they exist now. The
-README is the shorter entry point; this is the detailed current-state map.
+This describes the current code and Terraform configuration, not a claim that
+every optional feature is enabled or that a deployment is healthy. For commands
+and logs, use [the operations runbook](../infra/README.md).
 
-> Private strategy values and inputs remain outside git in
-> `alertengine/settings_local.py`, `alertengine/rules/_private/`, and
-> `alertengine/data/`.
+## The one-minute explanation
 
-## Start here: the system in one picture
+> I built a Python service that monitors market data and sends actionable
+> alerts through Discord, which also acts as its remote control. I separated
+> the data providers, rules, and notifications behind interfaces so I could
+> test the same engine with mock, historical, and live data. The engine owns
+> per-stock history and a small state machine that separates a possible setup
+> from a confirmed alert. It runs on EC2 because it maintains long-lived
+> connections. Terraform provisions the AWS resources, GitHub Actions deploys
+> through short-lived OIDC credentials, and CloudWatch collects structured
+> logs. I kept it single-instance rather than adding a database or message
+> broker before there was a real need for one.
 
-```text
-                                    CONTROL
-                         Discord commands or local REPL
-                                      │
-                                      ▼
-                              WatchController
-                        start / stop / resubscribe
-                                      │
-                                      ▼
-  candidates.csv ──┐           ApprovalGate             manual watchlist
-  live screen ─────┼────────── approved symbols ◀────── Discord /watch
-  REPL approve ────┘                 │
-                                      ▼
-                           AlpacaFeed websocket
-                              live 1-minute bars
-                                      │
-                                      ▼
-                              BarAggregator
-                         clock-aligned 2-minute bars
-                                      │
-                                      ▼
-                               AlertEngine
-               history → alert window → BB/RSI rules → state machines
-                                      │
-                        ┌─────────────┴─────────────┐
-                        ▼                           ▼
-                ConsoleNotifier              DiscordBot
-                stdout + alerts.log          lifecycle cards + commands
-                                               │
-                              Yahoo research ◀─┴─▶ Robinhood stock page
-```
+The strongest interview themes are state ownership, provider isolation,
+bounded retries, deployment/security, and deliberate right-sizing—not a claim
+of high-scale trading or guaranteed investment results.
 
-The post-close pre-screen is a separate batch flow. It writes
-`candidates.csv`; it does not run inside the live websocket loop.
+## Two workloads, one box
+
+The continuous watcher and the scheduled scan solve different problems:
+
+- **Watcher:** given a watchlist, decide when an alert is warranted.
+- **Pre-screen:** scan a curated spreadsheet and choose candidates to watch.
 
 ```text
-EventBridge Scheduler (3:00 PM America/Los_Angeles, weekdays)
-             │
-             ▼
-Lambda holiday guard ──▶ SSM Run Command ──▶ systemd pre-screen unit
-                                                   │
-                         curated watchlist.xlsx ────┤
-                                                   ▼
-                                      Alpaca historical REST
-                                       regular session only
-                                                   │
-                              ┌────────────────────┴────────────────────┐
-                              ▼                                         ▼
-                    OVERSOLD: RSI < 30                        OVERBOUGHT: RSI > 70
-                       on 4h and 1h                              on 4h and 1h
-                              └────────────────────┬────────────────────┘
-                                                   ▼
-                                       union, labeled by signal
-                                                   │
-                              ┌────────────────────┴────────────────────┐
-                              ▼                                         ▼
-                       candidates.csv                         Discord audit summary
-                   replace automatic set             both directions + deltas
-                              │
-                     restart engine
+Discord commands / local REPL
+              │
+              ▼
+       WatchController ──▶ ApprovalGate (current approved symbols)
+              │
+              ▼
+       Alpaca websocket (completed 1-minute bars)
+              │
+              ▼
+       BarAggregator (native 1-minute or configured multi-minute candles)
+              │
+              ▼
+       AlertEngine
+       bounded history → alert window → rules → confirmation machines
+              │
+              ▼
+       MultiNotifier ──┬─▶ console / alert log
+                       └─▶ Discord lifecycle cards + confirmation messages
 ```
 
-Yahoo Most Actives belongs to the separate interactive `screen` path. It does
-not populate the curated spreadsheet or feed this scheduled RSI pre-screen.
-
-The optional overnight path runs alongside, rather than inside, the Alpaca
-stream:
+The pre-screen runs in a separate process on the same instance:
 
 ```text
-Discord /penny-watch ─▶ separate ApprovalGate + WatchController
-                                      │
-                                      ▼
-                         Robinhood MCP historical read
-                              1-minute 24/5 bars
-                                      │
-                     overlap polling + timestamp de-duplication
-                                      │
-                                      ▼
-                   configured candles (currently native 1-minute)
-                                      │
-                                      ▼
-                     independent AlertEngine state machines
-                                      │
-                                      ▼
-                    tagged console + Discord alerts (no orders)
+EventBridge Scheduler (3 PM Pacific, weekdays)
+    → Lambda holiday guard
+    → SSM Run Command
+    → systemd pre-screen service on EC2
+    → watchlist.xlsx + Alpaca historical REST
+    → 4-hour / 1-hour RSI agreement in either direction
+    → candidates.csv + audit report + Discord summary
+    → restart engine → load the new automatic watchlist
 ```
 
-## Runtime modes
+**Lambda triggers the work; it does not run the scan.** This avoids packaging
+the data-analysis dependencies and private files into another runtime. The
+systemd pre-screen `.service` is still needed; only the old `.timer` was removed.
 
-All modes build the same `AlertEngine`; only the adapters and control surface
-change.
+The interactive Yahoo Finance screen is separate from this spreadsheet-based
+batch job. Its output enters the watchlist only when explicitly approved.
 
-| Command | Screener | Data feed | Control and alerts |
+An optional second watcher polls Robinhood historical bars through an
+allowlisted, read-only MCP adapter. It has its own watchlist, controller, and
+engine state; it shares the implementation and Discord delivery, not the
+regular watcher's state. It is disabled by default and exposes no order tool.
+
+## File map: who owns what?
+
+Paths below are relative to `alertengine/` unless an `infra/` prefix is shown.
+Package `__init__.py` files expose packages; the runtime responsibilities are:
+
+| Files | Responsibility |
+|---|---|
+| `__main__.py` | Composition root: choose adapters, register strategies, start REPL or Discord |
+| `interfaces.py`, `models.py` | Adapter contracts and shared `Bar`, `Candidate`, `Alert` types |
+| `strategy.py`, `settings.py` | Strategy configuration and publishable defaults; private overrides are injected separately |
+| `engine.py` | Per-symbol history, rule evaluation, independent BUY/SELL state machines, notification de-duplication |
+| `aggregator.py`, `indicators.py` | Candle construction and indicator calculations |
+| `alert_window.py`, `market_session.py` | Timezone-aware alert eligibility and market-session labels |
+| `gate.py`, `watch_controller.py` | Approved set; subscription start/stop/retry; manual/automatic watchlist ownership and persistence |
+| `repl.py`, `discord_bot.py` | Local/remote commands; Discord authorization, lifecycle cards, background scans |
+| `feeds/alpaca_feed.py`, `feeds/alpaca_replay_feed.py`, `feeds/mock_feed.py` | Live stream and historical requests, replay, synthetic test feed |
+| `screeners/yfinance_screener.py`, `screeners/mock_screener.py` | Interactive candidate screening, real or synthetic |
+| `rules/bb_rsi_rule.py`, `rules/bb_rsi_exit_rule.py` | Public example setup rules; actual private rules remain outside git |
+| `notifiers/console_notifier.py`, `notifiers/multi_notifier.py`, `notifiers/tagged_notifier.py` | Console/log delivery, fan-out, optional watcher labels; Discord bot also implements `Notifier` |
+| `prescreen/__main__.py`, `prescreen/runner.py`, `prescreen/calendar.py` | Batch entry point, shared pipeline, trading-day guard |
+| `prescreen/watchlist.py`, `prescreen/screener.py`, `prescreen/sinks.py`, `prescreen/reporting.py` | Spreadsheet input, timeframe agreement, CSV output, audit report/Discord summary |
+| `feeds/robinhood_feed.py`, `feeds/historical_polling_feed.py` | Normalize historical responses; poll completed minutes with overlap and timestamp de-duplication |
+| `feeds/robinhood_mcp_transport.py`, `robinhood_auth.py` | Allowlisted read-only transport, OAuth storage/refresh and local authorization bootstrap |
+| `logging_config.py` | JSON logging to stderr and optional rotating production files |
+| `infra/terraform/` | AWS resources, IAM policies, remote state, scheduler and CI trust |
+| `infra/systemd/`, `infra/scripts/`, `infra/lambda/prescreen_trigger/handler.py` | Process lifecycle, bootstrap/redeploy/config/log shipping, thin scheduled trigger |
+| `tests/` | Public regression tests with fake providers; private rules have separate ignored tests |
+
+## How confirmation works
+
+Each watched symbol has a BUY machine and, when configured, a separate SELL
+machine. They share market history but keep their own timers and confirmation
+state.
+
+```text
+WAITING ── setup found ──▶ ARMED ── confirmation passes ──▶ COOLDOWN
+   ▲                        │                                  │
+   └──── window expires ────┘                                  │
+   └──── setup clears + minimum cooldown elapses ───────────────┘
+```
+
+At arming, the engine records the candle's timestamp and a snapshot of its
+setup values. An optional `ArmedTriggerRule` receives that fixed reference and
+the current history. It can combine observations across candles without owning
+mutable per-symbol state. The public example instead confirms with a candle
+pattern; `ConfirmationRule` can add a post-pattern gate.
+
+BUY and SELL may use different timeout lengths. Timeouts count subsequent
+completed strategy bars; they are not independent wall-clock alarms. Success
+on the last permitted bar wins over expiration. Private values and confirmation
+logic stay in the ignored overlay, not in this document.
+
+Outside the configured Pacific alert window, bars still warm indicator history,
+but rules do not run and pending machine state resets. A timeout also resets
+the setup reference; it cannot be carried into the next attempt. Depending on
+strategy configuration, history may be retained. Shared history is never
+cleared if that would blind an active peer direction.
+
+Discord creates an armed card, then edits it to `CONFIRMED` or `EXPIRED`.
+Confirmation also posts a fresh message so phone notifications do not rely on
+message edits. The expiration display is a Discord timestamp, not a continuously
+updated bot message. Yahoo/Robinhood links open research or stock pages; they
+cannot place or prefill orders.
+
+The regular watcher can limit each symbol/alert kind to one delivery per
+Pacific day, while configured strategies allow repeated setup/expiration
+lifecycles. **That delivery history is in memory, not durable exactly-once
+delivery.** A process restart resets it and loses old card handles.
+
+## Why these design choices?
+
+**Interfaces, not a separate engine per provider.** `Screener`, `DataFeed`,
+`AlertRule`, and `Notifier` are the original boundaries. `HistoricalBarFeed`
+adapts range-query providers, and `CandidateSink` isolates batch output.
+Mock/replay/live reuse the engine. A new provider still needs normalization and
+tests, but it does not need a copy of the trading state machine.
+
+**One owner for retries.** `AlpacaFeed` performs one websocket attempt;
+`WatchController` supervises it and retries after a delay. Historical requests
+have bounded timeouts and batches. This avoids a dependency retry loop starving
+the event loop that also serves Discord commands.
+
+**One owner for state.** Rules calculate signals; the engine owns history and
+confirmation state; the controller owns subscriptions and watchlist provenance.
+Adding a symbol therefore resubscribes the feed instead of just changing a set
+that an already-open websocket never sees.
+
+**Separate heavy batch work from responsive controls.** Discord `/prescreen`
+starts a child process and applies its results to the running controller.
+The scheduled service runs separately and restarts the engine after success.
+Both paths have a five-minute execution bound.
+
+**Recompute market data; persist user choices.** REST backfill warms indicators
+silently at subscription startup. It looks back seven calendar days, keeps a
+bounded tail, and merges overlapping timestamps without duplicate history.
+Manual watchlists and the selected strategy are worth persisting; old setup
+timers are deliberately not restored.
+
+**Single-instance AWS, not microservices for their own sake.** The service holds
+long-lived market-data and Discord connections. EC2 is a straightforward fit.
+Lambda handles the small scheduled edge. There is no current requirement for
+a managed database, broker, Kubernetes, or independently scaled services.
+
+## AWS: each service has a job
+
+| Service/tool | Job in this project |
+|---|---|
+| EC2 + EBS | Always-on compute and its local disk |
+| systemd (Linux, not AWS) | Keep the engine running; execute config/pre-screen units; signal crash loops |
+| IAM | Define what the instance, scheduler, Lambda, and CI roles may access |
+| SSM Parameter Store | Encrypted runtime credentials and Discord configuration |
+| SSM Session Manager / Run Command | Shell access and automation without inbound SSH |
+| S3 | Private configuration/rules, persisted user choices/OAuth, separate Terraform state bucket |
+| EventBridge Scheduler + Lambda | Timezone-aware weekday schedule and lightweight holiday-gated trigger |
+| CloudWatch + SNS | Structured logs, EC2 status alarm, infrastructure-health notifications |
+| Terraform | Declare/provision infrastructure and retain its state in S3 with native locking |
+| GitHub Actions + OIDC | Test pushes/PRs; obtain temporary AWS credentials to redeploy `main` |
+| Resource Groups | Tag-based console view, not an application dependency |
+
+EC2 has no inbound security-group rules and requires IMDSv2 for metadata access.
+Its instance role supplies AWS credentials; CI assumes a scoped role through
+OIDC. Third-party tokens remain
+in SSM or the private S3 overlay. Discord commands check guild, channel, and
+user allowlists. This is a single-user control plane, not an app with its own
+accounts or tenant isolation.
+
+## What survives a restart?
+
+| State | Stored where | Process restart | EC2/root-volume replacement |
 |---|---|---|---|
-| `python -m alertengine` | mock | synthetic 1-min bars | local REPL + console |
-| `python -m alertengine --replay` | yfinance | historical Alpaca REST replay | local REPL + console |
-| `python -m alertengine --live` | yfinance | live Alpaca websocket | local REPL + console |
-| `python -m alertengine --live --headless` | yfinance | live Alpaca websocket | Discord + console; production systemd mode |
+| Indicator history | Memory; REST backfill | Rebuilt | Rebuilt |
+| Timers, cooldown, daily delivery gate, Discord card handles | Memory | Lost | Lost |
+| Automatic candidates + audit report | Local CSV/JSON | Survive | Re-run pre-screen |
+| Manual watchlists + selected strategy | Local files, mirrored to private S3 | Survive | Restored from S3 if upload succeeded |
+| Optional Robinhood OAuth state | Protected local file, mirrored to S3 | Survives | Restored from S3 if upload succeeded |
+| Logs | journald, local files, retained CloudWatch copies | Local/remote logs remain subject to retention | Only shipped CloudWatch copies remain |
 
-`--prescreen` may be added to a live/replay startup to refresh the candidates
-first. Production normally uses the separately scheduled pre-screen unit.
+S3 persistence is best-effort: local changes still apply if upload fails, and
+Discord reports a warning. The instance is a single point of failure; neither
+S3 backups nor a running process make this a highly available system.
 
-## Component ownership
-
-The easiest way to understand the code is by asking which object owns each
-kind of state or decision.
-
-| Component | Owns | Does not own |
-|---|---|---|
-| `AlertEngine` | active strategy, per-symbol bar history, buy/sell confirmation machines, rule evaluation, optional post-pattern confirmation rule | websocket retries, approved-symbol persistence |
-| `AlertWindow` | `HH:MM` parsing, Pacific/DST conversion, normal and overnight window checks | market data filtering |
-| `WatchController` | watch task, reconnect supervision, dynamic subscriptions, automatic/manual provenance, manual persistence | indicator/rule state |
-| `ApprovalGate` | current in-memory union of approved symbols | durable storage |
-| `BarAggregator` | native 1-minute pass-through or partial clock-aligned multi-minute buckets per symbol | historical indicator state |
-| `AlpacaFeed` | REST requests and one websocket connection attempt | retry scheduling after a failed socket |
-| `DiscordBot` | command authorization, slash commands, lifecycle-message handles, link buttons, background manual pre-screen job | trading logic, order execution |
-| `PreScreener` | 4h/1h RSI confluence | live BB/RSI alert decisions |
-| `RobinhoodHistoricalFeed` | request batching and response normalization | OAuth, polling, strategy logic |
-| `HistoricalPollingFeed` | completed-minute polling, overlap recovery, de-duplication | provider authentication, indicator rules |
-
-This separation is deliberate. For example, a websocket failure escapes
-`AlpacaFeed`; `WatchController` logs it and creates a fresh subscription after a
-10-second delay. The engine never needs to know why the feed restarted.
-
-## One completed-bar journey
-
-1. Alpaca sends completed 1-minute bars over its websocket.
-2. `BarAggregator` passes native 1-minute strategy bars through immediately or
-   groups them into clock-aligned multi-minute buckets. A missing minute may
-   produce a valid partial bucket.
-3. `AlertEngine` appends the completed strategy bar to the symbol's bounded
-   history.
-4. `AlertWindow` converts an aware timestamp to `America/Los_Angeles` and checks
-   the inclusive `WINDOW_START`/`WINDOW_END` range.
-   - Outside the window, history still stays warm, but neither rule runs.
-   - Any armed/cooldown state resets, so one window cannot confirm in another.
-   - Equal endpoints mean always open; a start after the end crosses midnight.
-5. Inside the window, the buy and optional sell rules evaluate the same shared
-   history.
-   - Alerts based on bars before the 06:30 Pacific regular-session open are
-     labelled `PREMARKET` in Discord and console output.
-6. A setup alert arms its direction-specific state machine. The arming bar does
-   not count toward confirmation. The event includes its expected expiration,
-   and Discord posts one yellow/orange lifecycle card with research links.
-7. Two consecutive green closes confirm the public BUY pattern; two consecutive
-   red closes confirm SELL. An optional `ConfirmationRule` may apply additional
-   private checks after the BUY pattern, while an `ArmedTriggerRule` can replace
-   the candle pattern for either direction. Window-aware triggers receive the
-   exact arm timestamp and a copy of the captured setup values, so they can
-   combine observations made on separate bars against a fixed reference without
-   owning mutable state. Each direction has a timeout (SELL can override the
-   shared default), which still bounds the armed state, and a
-   cooldown suppresses repeats.
-8. If the confirmation window elapses, the engine emits an expiration event;
-   Discord edits the original card to gray `EXPIRED` without posting a new
-   notification. On confirmation, Discord edits the card to `CONFIRMED` and
-   also posts a fresh BUY/SELL message so mobile push delivery is not dependent
-   on a message edit. Confirmed messages put Robinhood first and Yahoo research
-   second; expired cards retain only the research link. These are stock-detail
-   links only and cannot place or prefill an order.
-9. For the regular watcher, a delivery gate permits each symbol/alert kind only
-   once per Pacific calendar day by default. Strategies may allow fresh
-   WATCH/EXPIRED lifecycle cards after a timeout while retaining the once-daily
-   final BUY/SELL limit; after a final alert, no new same-direction timer starts
-   that day. The penny watcher retains repeat-after-cooldown behavior.
-10. `MultiNotifier` sends permitted alerts to the console/log and Discord.
-
-Discord's lifecycle-message handles live in process memory because setups are
-short-lived. If the service restarts while a card is armed, the old Discord
-message remains visible but cannot be edited by the new process; its displayed
-expiration time still communicates when it became stale.
-
-REST backfill runs before a live subscription and seeds history without
-evaluating rules or sending alerts. It queries a seven-day calendar window,
-then retains only the latest bounded one-minute tail per symbol. That reaches
-the previous session across weekends and normal market holidays without
-letting old history grow unbounded.
-
-For Robinhood, gap-filled bars carry `interpolated=true`. They retain clock
-alignment for indicators, but a fully synthetic two-minute candle cannot arm a
-setup or count as a green/red confirmation. Mixed two-minute buckets derive
-OHLCV from real traded minutes only.
-
-## Watchlist lifecycle
-
-Three sources feed the same in-memory `ApprovalGate`:
-
-- scheduled/manual pre-screen survivors from `candidates.csv`;
-- symbols added manually through Discord `/watch` or the REPL;
-- results explicitly approved after `/screen` or REPL `screen`.
-
-On production startup, `run_discord()` loads persisted manual symbols, then
-loads `candidates.csv` as the automatic set, then starts the watcher if the
-union is non-empty.
-`WatchController` restarts the websocket whenever the gate changes.
-
-`WatchController._automatic` tracks the latest pre-screen set in memory and
-`candidates.csv` persists it across restarts. `WatchController._manual` tracks
-explicit `/watch` choices and `alertengine/data/manual_watchlist.txt` persists
-them locally. In production, each manual change also uploads the full list to
-`private/runtime/manual_watchlist.txt` in the private S3 overlay; the config
-service restores it before the bot starts on a new instance. `ApprovalGate`
-contains their active union. A new pre-screen replaces the
-automatic set: disappeared candidates are ejected, while overlapping or manual
-symbols remain. `/unwatch` removes a symbol from the current gate; if it passes
-a future pre-screen it can be automatically selected again.
-
-The active strategy is selected from the registry supplied at startup.
-`/strategy` changes it through `WatchController`, which resets incompatible
-history and armed state, restarts an active feed, and atomically persists the
-name in `alertengine/data/active_strategy.txt`. Production mirrors that file to
-the private S3 overlay and restores it before the service starts.
-
-`/stop confirm:true` stops market streaming only. The Discord bot and systemd
-service remain online, the watchlist remains intact, and `/start` resumes it.
-
-When enabled, `/penny-watch`, `/penny-unwatch`, `/penny-watchlist`,
-`/penny-start`, `/penny-stop`, and `/penny-status` operate only on the second
-watcher. Its local `penny_watchlist.txt` and S3 object are independent of the
-regular manual and automatic sets.
-
-## Pre-screen lifecycle
-
-All pre-screen entry points call `run_prescreen()`:
-
-- `python -m alertengine.prescreen` — standalone/scheduled; checks the Alpaca
-  market calendar unless `--force` is supplied;
-- `python -m alertengine --live --prescreen` — refresh before startup;
-- REPL `prescreen` — synchronous local refresh;
-- Discord `/prescreen` — launches a child process, immediately acknowledges the
-  interaction, and posts the result later.
-
-The deployed EventBridge Scheduler expression is `cron(0 15 ? * MON-FRI *)`
-with timezone `America/Los_Angeles`, so it stays at 3:00 PM through daylight
-saving changes. Lambda skips configured market holidays, then asks SSM to start
-`market-sentinel-prescreen.service` by instance tag. The on-box command performs
-a second calendar check, fetches 30-minute historical bars in bounded batches,
-keeps only 09:30–16:00 ET regular-session bars, and aggregates them into
-market-open-aligned 4-hour and 1-hour closes. It selects each direction only
-when both timeframes agree, writes the labeled overbought/oversold union, reports
-both directions plus additions/removals to Discord, and restarts the engine.
-Both the systemd job and Discord background job are capped at five minutes.
-
-## The swappable seams
-
-`alertengine/interfaces.py` retains the four original adapter boundaries and
-adds range-based historical-data and strategy-confirmation extensions:
-
-```python
-class Screener:
-    async def get_candidates(self) -> list[Candidate]: ...
-
-class DataFeed:
-    async def stream_bars(self, symbols: list[str]) -> AsyncIterator[Bar]: ...
-
-class HistoricalBarFeed:
-    async def fetch_bars(
-        self, symbols: list[str], start: datetime, end: datetime
-    ) -> list[Bar]: ...
-
-class AlertRule:
-    def evaluate(self, symbol: str, bars: list[Bar]) -> Alert | None: ...
-
-class ConfirmationRule:
-    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None: ...
-
-class ArmedTriggerRule:
-    def evaluate(self, symbol: str, bars: list[Bar]) -> dict[str, float] | None: ...
-
-class Notifier:
-    async def send(self, alert: Alert) -> None: ...
-```
-
-`StrategyConfig` groups these rule seams with the bar interval and arm timeout.
-The public strategy is always registered; private settings may add selectable
-strategies without putting their logic in tracked code. `__main__.py` is the
-composition root that builds this registry and constructs the engine.
-`CandidateSink` is a separate, batch-only seam inside `prescreen/sinks.py`.
-
-## Production deployment
-
-The current deployment is intentionally a lean single box:
+## Deployment and failure boundaries
 
 ```text
-GitHub push to main
-        │
-        ▼
-GitHub Actions: Black + pytest
-        │ OIDC assume-role
-        ▼
-SSM Run Command ──▶ redeploy.sh ──▶ git fetch/reset + pip install
-                                      │
-                                      ▼
-                             restart config + engine units
-
-EC2 (Amazon Linux 2023, t3.micro by default)
-  ├─ market-sentinel-config.service
-  │    ├─ SSM SecureString → /etc/market-sentinel/engine.env
-  │    └─ private S3 overlay → git-ignored files
-  ├─ market-sentinel.service
-  │    └─ python -m alertengine --live --headless
-  └─ market-sentinel-prescreen.service (oneshot, schedule is off-box)
+Push main → GitHub Actions tests → OIDC → SSM → redeploy.sh
+                                              │
+                       pull code + install package/units
+                       refresh SSM config + private S3 overlay
+                       restart engine
 ```
 
-Security and operations:
+Terraform changes AWS resources. GitHub changes application code and unit files.
+Private overlay changes reach EC2 when the config service is refreshed. These
+are separate delivery paths; [the runbook](../infra/README.md) explains each.
 
-- the security group has no inbound rules; all service connections are
-  outbound and administration uses SSM Session Manager/Run Command;
-- EC2 uses an instance role and IMDSv2; GitHub Actions uses OIDC, so neither
-  path stores AWS access keys;
-- SSM Parameter Store holds runtime credentials/IDs; the private S3 bucket holds
-  private strategy files, the active-strategy selection, curated watchlists,
-  and refreshable Robinhood OAuth state; the token file is mode `0600` and never
-  enters git;
-- structured JSON application logs remain available in systemd `journald` and
-  are also shipped by the CloudWatch agent into per-instance `engine` and
-  `prescreen` streams with 14-day retention;
-- a CloudWatch EC2 status-check alarm and the systemd crash-loop `OnFailure`
-  hook both publish infrastructure alerts through SNS;
-- Lambda writes its own execution logs to its managed CloudWatch log group.
+The CloudWatch agent reads rotating JSON files in `/var/log/market-sentinel/`,
+not the journal directly. The same structured output also goes to stderr, which
+systemd captures in journald. Application logs have 14-day CloudWatch retention;
+Lambda has its own log group.
 
-Local `candidates.csv` and `alerts.log` survive process restarts but not EC2 root
-volume replacement. The manual watchlist survives replacement through its S3
-copy; automatic candidates can be rebuilt by the post-close pre-screen. The
-penny watchlist and refreshable Robinhood OAuth state also survive through
-their separate private S3 objects.
-
-## Failure behavior
-
-| Failure | Current response |
+| Failure | Current response / limitation |
 |---|---|
-| Alpaca websocket exits/errors | propagate to `WatchController`; retry with a fresh client after 10 seconds |
-| Historical Alpaca request times out/connects poorly | bounded connect/read timeouts and one retry, in 20-symbol batches |
-| Watchlist changes | cancel old watch task with a bound, clear partial aggregator buckets, resubscribe |
-| Strategy changes | validate the registered name, clear incompatible strategy state, persist the choice, and restart an active subscription |
-| Discord `/prescreen` runs long | child process killed after five minutes; bot/watcher stay responsive |
-| Scheduled pre-screen runs long | systemd kills the oneshot after five minutes |
-| Engine repeatedly crashes | systemd stops after its start limit and triggers SNS failure notification |
-| EC2 becomes unhealthy/disappears | CloudWatch status-check alarm publishes to SNS |
-| yfinance screen fails | return the process's last successful screen result |
-| Robinhood query/OAuth refresh fails | fail the watcher attempt; its controller retries after 10 seconds and logs the failure |
+| Market stream fails | Controller retries with a fresh client after 10 seconds |
+| Pre-screen fails or times out | Job reports failure; no successful-result handoff; bot stays responsive on the manual path |
+| Engine crash-loops | systemd restart limit, then `OnFailure` publishes to SNS |
+| EC2 fails status checks | CloudWatch publishes to the same SNS ops topic |
+| SSM agent or Discord is unreachable | Remote control/deploy can fail even if the process/EC2 status looks healthy; no separate agent heartbeat alarm |
+| yfinance screen fails | Last successful in-process screen is returned |
 
-## Where to make common changes
+The Lambda trigger reports command submission, not scan completion. Inspect
+the pre-screen logs/Discord report for the result. Its holiday list needs yearly
+maintenance; the on-box calendar is a second check and fails open on lookup errors.
 
-| Goal | Primary location |
-|---|---|
-| Change private thresholds/window | git-ignored `alertengine/settings_local.py` |
-| Change public defaults | `alertengine/settings.py` |
-| Add an alert strategy | implement the rule seams and register a `StrategyConfig` in private settings |
-| Change command behavior | `discord_bot.py` and/or `repl.py` |
-| Change subscription lifecycle | `watch_controller.py` |
-| Change bar construction | `aggregator.py` and `tests/test_aggregator.py` |
-| Change post-close scan | `prescreen/` |
-| Change AWS resources | `infra/terraform/` |
-| Change on-box startup/deploy | `infra/systemd/` and `infra/scripts/` |
+## What is not built
 
-## Deferred architecture
-
-There is no RDS, web API, Kinesis/Kafka, Prometheus/Grafana, broker, or order
-execution today. A future web/multi-user shape can add durable storage and a UI
-behind the existing seams, but it should not be described as current behavior.
+No RDS/shared database, web UI/API, distributed message broker, Prometheus/Grafana,
+broker execution, or automated orders. A web/multi-user version would need a
+durable control/state model and authorization—not just a different notifier.
+These are possible next steps, not services to claim as deployed today.

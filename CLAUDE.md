@@ -1,7 +1,7 @@
 # CLAUDE.md — market-sentinel
 
 Async Python **alert engine** (not an auto-trader). It screens a stock universe
-on demand, watches human-approved symbols on 2-min bars, and sends armed +
+on demand, watches selected symbols on strategy-configured bars, and sends armed +
 confirmed buy/sell alerts to a private Discord channel. Discord slash commands
 are the deployed remote control; the local REPL remains for development. **No
 orders are ever placed.** See `docs/ARCHITECTURE.md` for the current runtime and AWS
@@ -10,8 +10,9 @@ design.
 ## Non-negotiable rules
 
 - **IP boundary — never commit private strategy.** The repo is intended to go
-  public, so only the public layer-1 rule (`alertengine/rules/bb_rsi_rule.py`)
-  and mocks ship. The private strategy logic goes in git-ignored
+  public, so tracked code ships public example rules, generic application/infra,
+  and test adapters—not the actual private strategy. Private strategy logic goes
+  in git-ignored
   `alertengine/rules/_private/`; real tuned params/criteria go in git-ignored
   `alertengine/settings_local.py` (which overrides `settings.py`). Hidden logic
   must be **ABSENT, not obfuscated**. `.gitignore` must keep covering `.env`,
@@ -45,22 +46,21 @@ path is:
 ```
 Discord/REPL ─▶ WatchController ─▶ [ApprovalGate] ─▶ DataFeed(1-min)
                                                           │
-                                                   aggregator(2-min)
+                                              configured bar aggregation
                                                         │
                                               history + AlertWindow
                                                         │
-                                              indicators (BB, RSI)
+                                              indicators + configured rules
                                                         │
                                          buy/sell AlertRules
                                                         │
                               confirmation machines/cooldown ─▶ Notifier
 ```
 
-- `alertengine/aggregator.py` — folds 1-min → clock-aligned 2-min bars
-  (flush-on-advance; handles IEX missing-minute and Robinhood synthetic bars).
-  Neither provider supplies native 2-min bars, hence the aggregation.
-- `alertengine/engine.py` — owns per-symbol 2-min history and confirmation
-  machines. Keeps `AlertRule` stateless.
+- `alertengine/aggregator.py` — native 1-min pass-through or clock-aligned
+  multi-minute bars (flush-on-advance; synthetic-aware).
+- `alertengine/engine.py` — owns per-symbol history, captured setup values, and
+  confirmation machines. BUY/SELL may have separate timeouts. Keeps rules stateless.
 - `alertengine/alert_window.py` — owns strict time parsing and Pacific/DST window
   checks. Outside-window bars warm history but cannot evaluate or advance alerts.
 - `alertengine/watch_controller.py` — owns start/stop/restart of the active
@@ -115,16 +115,20 @@ identical.
 
 - `README.md` is the public entry point; `docs/ARCHITECTURE.md` describes current
   behavior and ownership; `infra/README.md` is the production runbook.
-- Git-ignored private notes are non-authoritative and must not be referenced by
-  public-facing documentation.
+- Public docs explain mechanisms, not private strategy criteria. The ignored
+  `docs/BUILD_SPEC.md` is the private implementation contract; the other private
+  context documents preserve history. Do not link private notes from public docs.
 - When runtime behavior changes, update the current-state docs in the same pass.
   Verify commands, schedules, persistence, logging, and failure behavior against
   code/IaC rather than copying old plans forward.
 
 ## Status / roadmap
 
-Build Order steps 1–11 are **built and tested**. The lean AWS stack, scheduled
-pre-screen, CI/CD, Discord control/alerts, and live Alpaca service are deployed.
-The read-only Robinhood overnight watcher is the latest deployment increment.
-Structured journald output is shipped by the CloudWatch agent into the retained
-engine/pre-screen streams. See `docs/ARCHITECTURE.md` for current status.
+The code includes the lean AWS stack, scheduled pre-screen, CI/CD, Discord
+control/alerts, the live Alpaca service, and an optional read-only Robinhood
+watcher. The engine captures setup references and supports direction-specific
+confirmation windows. Distinguish code/configuration from verified live health
+or feature enablement; neither a pushed commit nor this doc proves deployment.
+The CloudWatch agent ships rotating JSON application files; the same structured
+output is also captured by journald. See `docs/ARCHITECTURE.md` for the current
+design and `infra/README.md` for operations.

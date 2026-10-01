@@ -1,15 +1,17 @@
 # infra/ — AWS deploy for market-sentinel
 
-Infrastructure-as-code for the **lean single-box** deploy (Shape 1 in
-[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)): one always-on EC2 instance runs the
+Infrastructure-as-code for the **lean single-box** deploy described in
+[the architecture guide](../docs/ARCHITECTURE.md): one always-on EC2 instance runs the
 alert engine as a systemd service; the weekday 3:00 PM Pacific post-close screen
 is triggered by EventBridge Scheduler → Lambda → SSM Run Command (no on-box
 timer). Everything is
 provisioned with Terraform; the box is administered through SSM Session Manager
 (no SSH, no open inbound ports).
 
-> The engine core never changes for the cloud. Deploy touches only wiring +
-> Notifier/Sink impls, per the four-seams contract.
+The application runs on EC2; Lambda only triggers the batch job. systemd keeps
+processes running inside the instance, while SSM provides remote access and
+automation. For the design trade-offs, read the architecture doc; this file is
+the operating manual.
 
 ## Layout
 
@@ -39,6 +41,8 @@ infra/
     fetch-config.sh     # SSM parameters → protected EnvironmentFile
     sync-overlay.sh     # private S3 inputs → git-ignored paths
     redeploy.sh         # CI/manual pull, install, restart
+    configure-cloudwatch.sh # install/configure the log-shipping agent
+    notify-ops.sh       # systemd failure notification → SNS
   systemd/              # engine, config, pre-screen, and failure notifier units
   lambda/               # EventBridge pre-screen trigger handler
 ```
@@ -48,14 +52,14 @@ infra/
 | Service | Role | Kept minimal? |
 |---|---|---|
 | **EC2** | Always-on box running the Alpaca websocket, Robinhood poller, and Discord bot | core |
-| **IAM** | Least-priv instance role; no static keys anywhere | core |
+| **IAM** | Scoped roles for EC2, scheduler, Lambda, and CI | core |
 | **SSM** | Parameter Store (secrets), Session Manager (shell), Run Command | core |
 | **S3** | Private strategy overlay, active-strategy selection, both manual watchlists, and Robinhood OAuth persistence | core |
 | **CloudWatch** | EC2 status alarm, Lambda logs, and 14-day structured application logs | core |
 | **SNS** | Infra-health alerts (trading alerts/control use Discord) | minimal |
 | **Lambda + EventBridge Scheduler** | Thin weekday 3:00 PM Pacific trigger → on-box pre-screen via Run Command | minimal |
-| **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | free |
-| **Resource Groups** | One console view of every `Project`-tagged resource | free |
+| **GitHub Actions (OIDC)** | Tests on push/PR; deploy to box on main via a tag-scoped SSM role — no stored AWS keys | CI/CD |
+| **Resource Groups** | One console view of supported `Project`-tagged resources | console only |
 
 No RDS (no managed Postgres) — local disk holds `candidates.csv`, `alerts.log`,
 and a working copy of the S3-backed manual watchlist. Engine stdout/stderr stays
@@ -97,8 +101,9 @@ aws s3 cp ../../alertengine/data/watchlist.xlsx       "s3://$BUCKET/private/watc
 # Optional read-only Robinhood watcher, after local OAuth bootstrap:
 aws s3 cp ../../alertengine/data/robinhood_oauth.json \
   "s3://$BUCKET/private/runtime/robinhood_oauth.json"
-# Optional only after a private rule package exists:
-# aws s3 cp --recursive ../../alertengine/rules/_private "s3://$BUCKET/private/rules/_private"
+# Required if settings_local.py imports private rules:
+# aws s3 sync ../../alertengine/rules/_private/ "s3://$BUCKET/private/rules/_private/" \
+#   --exclude '__pycache__/*' --exclude '*.pyc' --exclude 'test_*.py'
 
 # 6. Now apply the rest — this launches the box, which boots with real secrets,
 #    clones, installs the systemd units, and starts the engine.
@@ -129,6 +134,51 @@ aws lambda invoke \
   /tmp/prescreen-response.json
 cat /tmp/prescreen-response.json
 ```
+
+`triggered` means Lambda submitted an SSM command, not that the scan completed.
+Check the pre-screen logs and Discord summary for completion. The Lambda holiday
+list needs yearly maintenance; the on-box calendar check fails open if lookup
+fails. Discord's manual `/prescreen` uses `--force`, so it can run off-hours or
+on a non-trading day.
+
+## Updating an existing deployment
+
+There are three delivery paths. A push is not an infrastructure apply, and an
+S3 upload by itself does not refresh a running Python process.
+
+| Changed | Delivery path |
+|---|---|
+| Python code, dependencies, unit files, deploy scripts | Commit/push to `main`; CI tests, redeploys, refreshes config/overlay, restarts engine |
+| Private settings/rules or curated spreadsheet | Upload to private S3; refresh config and restart, or let the next CI redeploy do both |
+| Terraform resource configuration | Review `terraform plan`, then `terraform apply`; first push any repo files a new instance needs at boot |
+
+For a combined code + private-strategy update, upload the overlay before the
+push so CI installs a matching pair:
+
+```bash
+cd /path/to/market-sentinel
+OVERLAY_BUCKET=$(terraform -chdir=infra/terraform output -raw overlay_bucket)
+aws s3 cp alertengine/settings_local.py \
+  "s3://$OVERLAY_BUCKET/private/settings_local.py" --region us-east-1
+aws s3 sync alertengine/rules/_private/ \
+  "s3://$OVERLAY_BUCKET/private/rules/_private/" --region us-east-1 \
+  --exclude '__pycache__/*' --exclude '*.pyc' --exclude 'test_*.py'
+# Review/stage/commit the public changes, then:
+git push origin main
+```
+
+For an overlay-only update, run the following after uploading:
+
+```bash
+aws ssm send-command --region us-east-1 \
+  --targets 'Key=tag:Project,Values=market-sentinel' \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["systemctl restart market-sentinel-config.service","systemctl restart market-sentinel.service"]'
+```
+
+Check the command result or both CI jobs for success. These restarts clear active
+confirmation timers, in-memory daily de-duplication, and old Discord card handles.
+No `terraform apply` is needed for a code/overlay-only update.
 
 ## Operations and logs
 
@@ -179,8 +229,9 @@ set a billing budget instead of relying on a fixed number in this document.
 ## Safety
 
 - **No inbound ports.** Shell access is SSM Session Manager only.
-- **No static AWS credentials.** The box uses an instance role; CI uses OIDC.
-  There is no IAM user with long-lived AWS keys. Third-party API tokens remain
+- **No static AWS credentials in EC2 or CI.** The box uses an instance role;
+  CI uses OIDC. Local Terraform credentials are configured separately, preferably
+  through SSO rather than a long-lived admin key. Third-party API tokens remain
   in Parameter Store or the private S3 overlay and are scoped by the
   instance-role policy. The Robinhood application adapter exposes historical
   reads only and has no order-call escape hatch.

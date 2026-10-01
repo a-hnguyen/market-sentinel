@@ -84,6 +84,10 @@ Alert delivery is event-driven rather than continuously refreshed:
 - Card handles are short-lived in-memory state. A service restart leaves any old
   card static, but its expiration remains visible and new setups create new
   cards.
+- Confirmation windows may differ by direction. The card's deadline comes from
+  that setup's configured window; it is not a continuously polled wall-clock
+  timer. Expiration is processed when subsequent completed bars reach the limit
+  or the alert window closes.
 
 Do not run a local `--headless` process with the production token while EC2 is
 online: it would create a second Gateway client for the same control bot. Local
@@ -118,7 +122,10 @@ persisted watchlist and do not affect the regular Alpaca watcher.
 - `/status` includes watcher state, active strategy, aggregation interval,
   per-symbol state, and whether the configured Pacific alert window is currently
   open. It also separates automatic pre-screen symbols from explicit manual
-  `/watch` symbols.
+  `/watch` symbols. The engine status includes separate BUY/SELL timeout settings;
+  the per-symbol phases show whether each direction is waiting, armed, or cooling
+  down. Daily delivery limits and pending setups are in memory and reset on a
+  service restart.
 - Alerts based on bars before the 6:30 AM Pacific regular-session open are
   prefixed `PREMARKET` so extended-hours signals are unambiguous.
 - `/screen` makes each candidate symbol a Yahoo Finance research link.
