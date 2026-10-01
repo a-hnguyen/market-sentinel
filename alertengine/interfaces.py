@@ -72,6 +72,16 @@ class ArmedTriggerRule(ABC):
         """
         return self.evaluate(symbol, bars)
 
+    def evaluate_armed(
+        self,
+        symbol: str,
+        bars: list[Bar],
+        armed_at: datetime,
+        setup_context: dict,
+    ) -> dict[str, float] | None:
+        """Evaluate with the captured setup values; legacy rules use the timestamp."""
+        return self.evaluate_since(symbol, bars, armed_at)
+
 
 class Notifier(ABC):
     @abstractmethod

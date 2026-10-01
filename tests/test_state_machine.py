@@ -400,6 +400,41 @@ def test_armed_trigger_receives_the_setup_window_start():
     assert trigger.armed_at == BASE
 
 
+def test_armed_trigger_receives_a_fixed_copy_of_setup_values():
+    class SnapshotTrigger(ScriptedTriggerRule):
+        def __init__(self):
+            super().__init__([])
+            self.snapshots = []
+
+        def evaluate_armed(self, symbol, bars, armed_at, setup_context):
+            self.snapshots.append((armed_at, dict(setup_context)))
+            setup_context["close"] = -1.0
+            setup_context["rsi"] = -1.0
+            return None
+
+    n = _Rec()
+    trigger = SnapshotTrigger()
+    e = _engine(
+        ScriptedRule(hot={0, 4}), n, buy_trigger_rule=trigger, arm_timeout_bars=3
+    )
+
+    asyncio.run(_feed(e, [_bar(0, False), _bar(1, True), _bar(2, True)]))
+
+    assert len(trigger.snapshots) == 2
+    assert all(timestamp == BASE for timestamp, _ in trigger.snapshots)
+    assert all(context["close"] == 99.0 for _, context in trigger.snapshots)
+    assert all(context["rsi"] == 0.0 for _, context in trigger.snapshots)
+    assert e._states["ZZ"].long.setup_context["close"] == 99.0
+
+    asyncio.run(_feed(e, [_bar(3, True)]))
+    assert e._states["ZZ"].long.setup_context == {}
+
+    asyncio.run(_feed(e, [_bar(4, True), _bar(5, False)]))
+    timestamp, context = trigger.snapshots[-1]
+    assert timestamp == _bar(4, True).timestamp
+    assert context["close"] == 101.0
+
+
 def test_armed_trigger_can_fire_on_final_minute_of_timeout_window():
     n = _Rec()
     trigger = ScriptedTriggerRule([None] * 14 + [{"trigger_value": 20.1}])
@@ -415,6 +450,34 @@ def test_armed_trigger_can_fire_on_final_minute_of_timeout_window():
 
     assert _kinds(n) == ["watch", "buy"]
     assert trigger.calls == 15
+
+
+def test_direction_specific_timeouts_expire_sell_without_expiring_buy():
+    n = _Rec()
+    e = _engine(
+        ScriptedRule(hot={0}),
+        n,
+        exit_rule=ScriptedRule(hot={0}),
+        buy_trigger_rule=ScriptedTriggerRule([None] * 8),
+        sell_trigger_rule=ScriptedTriggerRule([None] * 3),
+        bar_interval_minutes=1,
+        arm_timeout_bars=8,
+        sell_arm_timeout_bars=3,
+    )
+    asyncio.run(_feed(e, [_bar(i, False, interval_minutes=1) for i in range(4)]))
+
+    assert _kinds(n) == ["watch", "sell_watch", "sell_watch_expired"]
+    assert e.status()["symbols"]["ZZ"]["phase"] == "armed"
+    assert e.status()["symbols"]["ZZ"]["sell_phase"] == "waiting"
+    assert (
+        n.alerts[0].context["expires_at"] == (BASE + timedelta(minutes=9)).isoformat()
+    )
+    assert (
+        n.alerts[1].context["expires_at"] == (BASE + timedelta(minutes=4)).isoformat()
+    )
+
+    asyncio.run(_feed(e, [_bar(i, False, interval_minutes=1) for i in range(4, 9)]))
+    assert _kinds(n)[-1] == "watch_expired"
 
 
 def test_armed_trigger_expires_after_fifteen_one_minute_bars():

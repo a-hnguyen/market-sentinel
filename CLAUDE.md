@@ -27,8 +27,10 @@ design.
   dashboard/IBKR later depends on these boundaries staying intact.
 - `ConfirmationRule` is an optional post-pattern BUY gate. `ArmedTriggerRule`
   can instead replace the candle pattern for either direction. The tracked engine
-  supports both generically; its optional `evaluate_since(...)` receives the
-  engine-owned arm timestamp for stateless, window-aware checks. Actual private
+  supports both generically; its optional `evaluate_armed(...)` receives the
+  engine-owned arm timestamp and a copy of the captured setup values for
+  stateless, window-aware checks. Its default delegates to `evaluate_since(...)`
+  so timestamp-only rules remain compatible. Actual private
   checks and parameters must remain in the ignored private layer. With no
   injected rule, public behavior is unchanged.
 - **Build incrementally.** Don't one-shot the app.

@@ -86,6 +86,29 @@ def test_selecting_active_strategy_is_idempotent():
     assert engine._states["ZZ"] is state
 
 
+def test_strategy_can_override_only_the_sell_timeout():
+    engine = _engine()
+    engine._strategies["split"] = _strategy(
+        "split", 1, 8, exit_rule=_Rule(), sell_arm_timeout_bars=3
+    )
+
+    engine.select_strategy("split")
+    state = engine._new_state()
+
+    assert state.long.arm_timeout_bars == 8
+    assert state.short.arm_timeout_bars == 3
+    assert engine.status()["sell_arm_timeout_bars"] == 3
+
+    engine.select_strategy("slow")
+    assert engine.sell_arm_timeout_bars == engine.arm_timeout_bars
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_strategy_rejects_nonpositive_sell_timeout(timeout):
+    with pytest.raises(ValueError, match="sell arm timeout must be positive"):
+        _strategy("invalid", 1, 8, sell_arm_timeout_bars=timeout)
+
+
 def test_select_strategy_rejects_unknown_name():
     with pytest.raises(ValueError, match="available: fast, slow"):
         _engine().select_strategy("missing")

@@ -163,8 +163,10 @@ This separation is deliberate. For example, a websocket failure escapes
    red closes confirm SELL. An optional `ConfirmationRule` may apply additional
    private checks after the BUY pattern, while an `ArmedTriggerRule` can replace
    the candle pattern for either direction. Window-aware triggers receive the
-   exact arm timestamp, so they can combine observations made on separate bars
-   without owning mutable state. A timeout still bounds the armed state, and a
+   exact arm timestamp and a copy of the captured setup values, so they can
+   combine observations made on separate bars against a fixed reference without
+   owning mutable state. Each direction has a timeout (SELL can override the
+   shared default), which still bounds the armed state, and a
    cooldown suppresses repeats.
 8. If the confirmation window elapses, the engine emits an expiration event;
    Discord edits the original card to gray `EXPIRED` without posting a new

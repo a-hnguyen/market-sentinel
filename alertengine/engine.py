@@ -61,6 +61,7 @@ class _DirectionMachine:
     bars_since_arm: int = 0  # timeout counter while ARMED
     bars_since_alert: int = 0  # min-floor counter while COOLDOWN
     armed_at: datetime | None = None  # start of the active confirmation window
+    setup_context: dict = field(default_factory=dict)
 
     def is_confirm_close(self, bar: Bar) -> bool:
         """A confirming close: green (up) for long, red (down) for short."""
@@ -75,6 +76,7 @@ class _DirectionMachine:
         self.bars_since_arm = 0
         self.bars_since_alert = 0
         self.armed_at = None
+        self.setup_context.clear()
 
     @property
     def watch_kind(self) -> str:
@@ -128,6 +130,7 @@ class AlertEngine:
         repeat_watch_lifecycle: bool = False,
         strategies: dict[str, StrategyConfig] | None = None,
         strategy_name: str = "default",
+        sell_arm_timeout_bars: int | None = None,
     ) -> None:
         self.screener = screener
         self.feed = feed
@@ -155,6 +158,7 @@ class AlertEngine:
             arm_timeout_bars=arm_timeout_bars,
             preserve_history_on_timeout=preserve_history_on_timeout,
             repeat_watch_lifecycle=repeat_watch_lifecycle,
+            sell_arm_timeout_bars=sell_arm_timeout_bars,
         )
         self._strategies = dict(strategies or {strategy_name: fallback})
         if strategy_name not in self._strategies:
@@ -212,6 +216,11 @@ class AlertEngine:
         self.sell_fire_rule = strategy.sell_fire_rule
         self.bar_interval_minutes = strategy.bar_interval_minutes
         self.arm_timeout_bars = strategy.arm_timeout_bars
+        self.sell_arm_timeout_bars = (
+            strategy.arm_timeout_bars
+            if strategy.sell_arm_timeout_bars is None
+            else strategy.sell_arm_timeout_bars
+        )
         self.preserve_history_on_timeout = strategy.preserve_history_on_timeout
         self.repeat_watch_lifecycle = strategy.repeat_watch_lifecycle
 
@@ -229,7 +238,7 @@ class AlertEngine:
         if self.exit_rule is not None:
             short = _DirectionMachine(
                 confirm_bars=self.confirm_red_bars,
-                arm_timeout_bars=self.arm_timeout_bars,
+                arm_timeout_bars=self.sell_arm_timeout_bars,
                 cooldown_bars=self.cooldown_bars,
                 long=False,
                 fire_rule=self.sell_fire_rule,
@@ -391,6 +400,7 @@ class AlertEngine:
         )
         setup.context.setdefault("expires_at", expires_at.isoformat())
         self._enrich(setup, bar.symbol)
+        machine.setup_context = {**setup.context, "close": bar.close}
         await self._notify(setup)
         _LOG.info(
             "event=armed symbol=%s direction=%s close=%.4f bar_time=%s",
@@ -412,8 +422,11 @@ class AlertEngine:
         if trigger_rule is not None:
             if machine.armed_at is None:  # pragma: no cover - state invariant
                 raise RuntimeError("armed machine is missing its start timestamp")
-            result = trigger_rule.evaluate_since(
-                bar.symbol, state.history, machine.armed_at
+            result = trigger_rule.evaluate_armed(
+                bar.symbol,
+                state.history,
+                machine.armed_at,
+                dict(machine.setup_context),
             )
             _LOG.info(
                 "event=armed_trigger_evaluation symbol=%s direction=%s "
@@ -628,6 +641,7 @@ class AlertEngine:
             "available_strategies": self.available_strategies,
             "bar_interval_minutes": self.bar_interval_minutes,
             "arm_timeout_bars": self.arm_timeout_bars,
+            "sell_arm_timeout_bars": self.sell_arm_timeout_bars,
             "alert_window": {
                 "timezone": self._alert_window.timezone.key,
                 "start": self._alert_window.start.strftime("%H:%M"),

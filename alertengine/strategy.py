@@ -19,6 +19,7 @@ class StrategyConfig:
     arm_timeout_bars: int = 15
     preserve_history_on_timeout: bool = False
     repeat_watch_lifecycle: bool = False
+    sell_arm_timeout_bars: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name or self.name != self.name.strip().lower():
@@ -27,3 +28,5 @@ class StrategyConfig:
             raise ValueError("bar interval must be positive")
         if self.arm_timeout_bars < 1:
             raise ValueError("arm timeout must be positive")
+        if self.sell_arm_timeout_bars is not None and self.sell_arm_timeout_bars < 1:
+            raise ValueError("sell arm timeout must be positive")
